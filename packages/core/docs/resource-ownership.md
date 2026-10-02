@@ -189,7 +189,10 @@ No module-global provider can be swapped by another root. Closing a view aborts
 its reads and prevents late results from enqueueing writes; writes already
 admitted to the root's byte-bounded queue survive file switches. Closing the
 client disposes the owner, aborts every view and discards remaining queued
-writes. Viewer write-backs drain after a quiet interval with bounded concurrency,
-while snapshot jobs flush and dispose their own cache after their complete
-source is loaded. Decoded component meshes retain their existing page-wide
+writes. Viewer write-backs drain in batches with bounded concurrency: after a
+quiet interval, no later than two seconds after a batch's first entry however
+busy the load, and at once when a batch reaches its byte bound; an entry is
+turned away only while the writer is still busy with the full batch before it.
+Snapshot jobs flush and dispose their own cache after their complete source is
+loaded. Decoded component meshes retain their existing page-wide
 content-addressed LRU; a cache view does not retain an additional geometry copy.

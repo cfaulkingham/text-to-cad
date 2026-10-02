@@ -61,7 +61,11 @@ export interface TessellationCache {
   getCachedComponentEntry(surfaceInput: string, options?: TessellationOptions, request?: TessellationReadOptions): Promise<TessellationCacheEntry | null>;
   getCachedEntryBytes(surfaceInput: string, options?: TessellationOptions, request?: TessellationReadOptions): Promise<Uint8Array | null>;
   getCachedEntryBytesMany(probes: TessellationProbe[], request?: { signal?: AbortSignal; maxBytes?: number }): Promise<(Uint8Array | null)[] | null>;
-  configureTessellationCacheWriteBack(options?: { deferMs?: number; concurrency?: number; maxPendingBytes?: number }): void;
+  /**
+   * Deferred write-backs: a batch is written once the load is quiet for `deferMs`, no later than
+   * `maxWaitMs` after its first entry, and at once when it reaches `maxPendingBytes`.
+   */
+  configureTessellationCacheWriteBack(options?: { deferMs?: number; maxWaitMs?: number; concurrency?: number; maxPendingBytes?: number }): void;
   flushTessellationCacheWriteBacks(): Promise<void>;
   writeBackEntryBytes(surfaceInput: string, options: TessellationOptions, bytes: Uint8Array): Promise<unknown>;
   writeBackComponentEntry(surfaceInput: string, surfaceObject: string, options: TessellationOptions, component: TessellatedComponent, index: unknown): Promise<unknown>;

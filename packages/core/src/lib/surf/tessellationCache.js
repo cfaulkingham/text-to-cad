@@ -701,19 +701,34 @@ export function createTessellationCache({ provider = null, writeBack = {} } = {}
     });
   }
 
-  let writeBackPolicy = { deferMs: 0, concurrency: Infinity, maxPendingBytes: TESS_BATCH_MAX_BYTES };
+  let writeBackPolicy = { deferMs: 0, maxWaitMs: 0, concurrency: Infinity, maxPendingBytes: TESS_BATCH_MAX_BYTES };
   const pendingWriteBacks = new Map();
   let pendingWriteBackBytes = 0;
   let activeWriteBackBytes = 0;
+  // The pending batch is written once the load has been quiet for `deferMs` (`writeBackTimer`,
+  // restarted by every entry) and no later than `maxWaitMs` after its first entry
+  // (`writeBackDeadline`, which no entry restarts).
   let writeBackTimer = null;
+  let writeBackDeadline = null;
   let writeBackDrain = null;
 
-  function configureTessellationCacheWriteBack({ deferMs = 0, concurrency = Infinity, maxPendingBytes = TESS_BATCH_MAX_BYTES } = {}) {
+  function configureTessellationCacheWriteBack({
+    deferMs = 0, maxWaitMs = TESS_WRITE_BACK_MAX_WAIT_MS, concurrency = Infinity, maxPendingBytes = TESS_BATCH_MAX_BYTES,
+  } = {}) {
+    const defer = Number.isFinite(deferMs) && deferMs > 0 ? deferMs : 0;
     writeBackPolicy = {
-      deferMs: Number.isFinite(deferMs) && deferMs > 0 ? deferMs : 0,
+      deferMs: defer,
+      maxWaitMs: Math.max(defer, Number.isFinite(maxWaitMs) && maxWaitMs > 0 ? maxWaitMs : TESS_WRITE_BACK_MAX_WAIT_MS),
       concurrency: Number.isFinite(concurrency) && concurrency >= 1 ? Math.floor(concurrency) : Infinity,
       maxPendingBytes: Number.isSafeInteger(maxPendingBytes) && maxPendingBytes >= 0 ? maxPendingBytes : TESS_BATCH_MAX_BYTES,
     };
+  }
+
+  function clearWriteBackTimers() {
+    if (writeBackTimer) clearTimeout(writeBackTimer);
+    if (writeBackDeadline) clearTimeout(writeBackDeadline);
+    writeBackTimer = null;
+    writeBackDeadline = null;
   }
 
   async function putEntry(key, bytes) {
@@ -728,6 +743,8 @@ export function createTessellationCache({ provider = null, writeBack = {} } = {}
 
   async function drainWriteBacks() {
     const limit = writeBackPolicy.concurrency;
+    // The timers were the pending batch's, and the batch is this drain's now.
+    clearWriteBackTimers();
     const queue = [...pendingWriteBacks.entries()];
     pendingWriteBacks.clear();
     activeWriteBackBytes += pendingWriteBackBytes;
@@ -749,11 +766,8 @@ export function createTessellationCache({ provider = null, writeBack = {} } = {}
 
   /** Write every deferred entry now. Resolves when the drain (and any running one) is done. */
   async function flushTessellationCacheWriteBacks() {
-    if (writeBackTimer) {
-      clearTimeout(writeBackTimer);
-      writeBackTimer = null;
-    }
-    if (writeBackDrain) {
+    // One drain at a time, at the configured concurrency.
+    while (writeBackDrain) {
       await writeBackDrain;
     }
     if (pendingWriteBacks.size) {
@@ -772,6 +786,12 @@ export function createTessellationCache({ provider = null, writeBack = {} } = {}
       writeBackTimer = null;
       void flushTessellationCacheWriteBacks();
     }, writeBackPolicy.deferMs);
+    // A long load restarts the quiet interval with every entry it tessellates: without a
+    // ceiling, its batch would wait for the whole load and fill up on the way.
+    writeBackDeadline ??= setTimeout(() => {
+      writeBackDeadline = null;
+      void flushTessellationCacheWriteBacks();
+    }, writeBackPolicy.maxWaitMs);
   }
 
 
@@ -784,11 +804,17 @@ export function createTessellationCache({ provider = null, writeBack = {} } = {}
       const previousBytes = pendingWriteBacks.get(key)?.byteLength || 0;
       const nextBytes = pendingWriteBackBytes + bytes.byteLength - previousBytes;
       // Deferred writes are optional cache warming. Never retain an unbounded
-      // assembly of encoded bodies beside its render-owned arrays.
-      if (nextBytes + activeWriteBackBytes > writeBackPolicy.maxPendingBytes) return null;
+      // assembly of encoded bodies beside its render-owned arrays: a batch that
+      // reaches `maxPendingBytes` is written at once, and an entry is turned away
+      // only when the writer is still busy with the batch before it.
+      if (writeBackDrain && nextBytes > writeBackPolicy.maxPendingBytes) {
+        void flushTessellationCacheWriteBacks();
+        return null;
+      }
       pendingWriteBacks.set(key, bytes);
       pendingWriteBackBytes = nextBytes;
-      scheduleWriteBackDrain();
+      if (nextBytes >= writeBackPolicy.maxPendingBytes) void flushTessellationCacheWriteBacks();
+      else scheduleWriteBackDrain();
       return null;
     }
     return putEntry(key, bytes);
@@ -860,8 +886,7 @@ export function createTessellationCache({ provider = null, writeBack = {} } = {}
       disposed = true;
       lifetime.abort();
       cacheProvider = null;
-      if (writeBackTimer) clearTimeout(writeBackTimer);
-      writeBackTimer = null;
+      clearWriteBackTimers();
       pendingWriteBacks.clear();
       pendingWriteBackBytes = 0;
     },
@@ -870,6 +895,8 @@ export function createTessellationCache({ provider = null, writeBack = {} } = {}
 }
 export const TESS_PROBE_MAX_KEYS = 256;
 export const TESS_BATCH_MAX_BYTES = 32 * 1024 * 1024;
+/** How long a deferred write-back waits after its batch's first entry, however busy the load. */
+export const TESS_WRITE_BACK_MAX_WAIT_MS = 2000;
 
 async function sha256Hex(bytes) {
   const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
