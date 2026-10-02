@@ -67,12 +67,12 @@ class WorkerScratchSweep(unittest.TestCase):
             def folder(name):
                 path = root / name
                 path.mkdir(parents=True)
-                (path / "assembly.json").write_text("{}")
+                (path / "assembly.json").write_text("{}", encoding="utf-8")
                 return path
 
             def file(name):
                 path = root / name
-                path.write_text("log")
+                path.write_text("log", encoding="utf-8")
                 return path
 
             gone = [folder(f"cadgen-views/{dead}"), folder(f"cadgen-view-{dead}-ab12cd34"),
