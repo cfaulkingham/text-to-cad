@@ -19,7 +19,8 @@ add_repo_path("packages/cadgen/src")
 class Fixture(unittest.TestCase):
     """Two children built through STEP (groups, exact-axis and arbitrary
     rotations, non-dyadic and out-of-range translations, a compound leaf, face
-    and uniform colours, a grandchild link) and the parents that place them."""
+    and uniform colours, a grandchild link, a name holding '#' and a quote) and
+    the parents that place them."""
 
     @classmethod
     def setUpClass(cls):
@@ -32,11 +33,15 @@ class Fixture(unittest.TestCase):
         cls.env.start()
         from cadgen.store.build import build_tree_through_step
 
-        cls.a_hash, _, a_stats, _ = build_tree_through_step(
+        from cadgen.store._splice_step import ChildStep
+
+        cls.a_hash, _, a_stats, a_step = build_tree_through_step(
             cls.child_a(), cls.root / "child_a.step", root_name="child_a")
-        cls.b_hash, _, b_stats, _ = build_tree_through_step(
+        cls.b_hash, _, b_stats, b_step = build_tree_through_step(
             cls.child_b(), cls.root / "child_b.step", root_name="child_b", _internal_source_publication=True)
         cls.documents = {cls.a_hash: a_stats["documentTree"], cls.b_hash: b_stats["documentTree"]}
+        cls.steps = {cls.a_hash: ChildStep(cls.root / "child_a.step", a_step),
+                     cls.b_hash: ChildStep(cls.root / "child_b.step", b_step)}
 
     @classmethod
     def tearDownClass(cls):
@@ -65,7 +70,7 @@ class Fixture(unittest.TestCase):
             cls.leaf("b", box, bd.Location(bd.Plane((0.1, 0.2, 0.3), x_dir=(0, 0, -1), z_dir=(1, 0, 0)))),
             cls.leaf("c", cylinder, bd.Location(bd.Plane((5.3, 0.7, -2.1), x_dir=(0, -1, 0), z_dir=(0, 0, -1))),
                      faces={1: (0., 0., 1., 1.)}),
-            cls.leaf("d", box, bd.Location((0.1, 7.7, 0.0), (0, 0, 37))),
+            cls.leaf("d #4 it's", box, bd.Location((0.1, 7.7, 0.0), (0, 0, 37))),
             cls.leaf("e", pair, bd.Location(bd.Plane((1.1, 1.2, 1.3), x_dir=(0, 1, 0), z_dir=(-1, 0, 0)))),
             cls.leaf("f", box, bd.Location((1234.5678901234, 0.000123456789, -1 / 3), (12, 34, 56))),
         ]
@@ -108,7 +113,7 @@ class Fixture(unittest.TestCase):
             links.append(extra)
         return bd.Compound(children=links, label="parent")
 
-    def build(self, shape, *, name="parent", force=False, documents=None, env=None, logger=None):
+    def build(self, shape, *, name="parent", force=False, documents=None, env=None, logger=None, steps=None):
         from cadgen.store.build import build_tree_through_step
 
         resolver = (lambda: self.documents) if documents is None else (lambda: documents)
@@ -116,6 +121,7 @@ class Fixture(unittest.TestCase):
             return build_tree_through_step(
                 shape, self.root / f"{name}.step", root_name=name, force=force,
                 _internal_source_publication=True, child_documents=resolver, logger=logger,
+                child_steps=None if steps is None else (lambda: steps),
             )
 
     @staticmethod
@@ -210,6 +216,95 @@ class ComposedTreeTest(Fixture):
         with mock.patch.object(composer, "compose_document_tree", side_effect=nudged):
             _, _, stats, _ = self.build(self.parent(), name="unchecked")
         self.assertEqual(stats["documentReadback"], "composed")
+
+
+class SplicedStepTest(Fixture):
+    """An all-link parent written from its children's saved files is the file OCCT writes, as far
+    as any reader can tell: its cold compile is the exported file's, and the composed tree binds
+    to it (``cadgen.store._splice_step``)."""
+
+    def spliced_parent(self, *, grouped=False, names=("link #1 it's", "b ''#2'' (x)")):
+        import build123d as bd
+
+        shape = self.parent([(self.a_hash, bd.Location((0.1, 0.2, 0.3))),
+                             (self.b_hash, bd.Location((7.3, -2.2, 0.0)))], grouped=grouped)
+        links = shape.children[0].children if grouped else shape.children
+        for link, name in zip(links, names):
+            link.label = name
+        if grouped:
+            shape.children[0].label = "grp #3 'q'"
+        return shape
+
+    def test_a_spliced_parent_compiles_to_the_exported_parent(self):
+        for grouped in (False, True):
+            with self.subTest(grouped=grouped):
+                name = f"spliced_{int(grouped)}"
+                _, _, stats, step_hash = self.build(self.spliced_parent(grouped=grouped), name=name, steps=self.steps)
+                self.assertTrue(stats["stepSpliced"])
+                self.assertEqual(stats["documentReadback"], "composed")
+                self.assertEqual(stats["documentTree"], self.parsed_document(self.root / f"{name}.step"))
+                # A forced build exports through OCCT and parses: the same document tree.
+                _, _, exported, exported_hash = self.build(self.spliced_parent(grouped=grouped), name=name, force=True)
+                self.assertFalse(exported["stepSpliced"])
+                self.assertNotEqual(step_hash, exported_hash)
+                self.assertEqual(stats["documentTree"], exported["documentTree"])
+
+    def test_a_splice_is_byte_for_byte_repeatable(self):
+        written = []
+        for _ in range(2):
+            _, _, stats, step_hash = self.build(self.spliced_parent(), name="repeat", steps=self.steps)
+            self.assertTrue(stats["stepSpliced"])
+            written.append((step_hash, (self.root / "repeat.step").read_bytes()))
+        self.assertEqual(written[0], written[1])
+
+    def test_ineligible_parents_are_exported(self):
+        import build123d as bd
+
+        from cadgen.store._splice_step import ChildStep
+
+        stale = dict(self.steps)
+        stale[self.b_hash] = ChildStep(self.steps[self.b_hash].path, "0" * 64)
+        cases = {
+            "repeated child": (self.parent(), self.steps),
+            "rotated link": (self.parent([(self.a_hash, bd.Location((1, 2, 3), (0, 90, 0)))]), self.steps),
+            "child file not as pinned": (self.spliced_parent(), stale),
+            "name needing escapes": (self.spliced_parent(names=("back\\slash", "b")), self.steps),
+        }
+        for label, (shape, steps) in cases.items():
+            with self.subTest(label):
+                name = label.replace(" ", "_")
+                logger = self.verbose_logger()
+                _, _, stats, _ = self.build(shape, name=name, logger=logger, steps=steps)
+                self.assertFalse(stats["stepSpliced"])
+                self.assertIn(f"{name}.step spliced from its children: no (", logger.stream.getvalue())
+                self.assertEqual(stats["documentTree"], self.parsed_document(self.root / f"{name}.step"))
+
+
+class PinnedChildStepsTest(unittest.TestCase):
+    def test_only_a_record_that_still_pins_the_tree_resolves_its_saved_step(self):
+        from cadgen._internal.generation import _pinned_child_steps
+        from cadgen.store._splice_step import ChildStep
+        from cadgen.store.records import write_record
+
+        scratch = generated_cad_directory(prefix="pinned-child-steps-")
+        self.addCleanup(scratch.cleanup)
+        root = Path(scratch.name)
+        step = str(root / "current.step")
+        with mock.patch.dict(os.environ, {"CADGEN_CACHE_DIR": str(root / "store")}):
+            write_record(root / "current.py", {"tree": "a" * 64, "stepHash": "1" * 64, "outputs": {
+                str(root / "current.stl"): {"sha256": "1" * 64}, step: {"sha256": "1" * 64}}})
+            write_record(root / "moved.py", {"tree": "b" * 64, "stepHash": "2" * 64,
+                                             "outputs": {str(root / "moved.step"): {"sha256": "2" * 64}}})
+            write_record(root / "mesh_only.py", {"tree": "c" * 64, "stepHash": None, "outputs": {}})
+            write_record(root / "edited.py", {"tree": "d" * 64, "stepHash": "4" * 64,
+                                              "outputs": {str(root / "edited.step"): {"sha256": "5" * 64}}})
+            scene = mock.Mock(store_children=[
+                {"model": str(root / "current.py"), "tree": "a" * 64},
+                {"model": str(root / "moved.py"), "tree": "9" * 64},
+                {"model": str(root / "mesh_only.py"), "tree": "c" * 64},
+                {"model": str(root / "edited.py"), "tree": "d" * 64},
+            ])
+            self.assertEqual(_pinned_child_steps(scene), {"a" * 64: ChildStep(Path(step), "1" * 64)})
 
 
 class PinnedChildDocumentsTest(unittest.TestCase):

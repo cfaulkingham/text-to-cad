@@ -359,6 +359,44 @@ identity. A real one (`link_arm`: a bar plus two placements of a pin model):
   decides whether the parent runs by its sources, and what it publishes for
   its bytes is the same tree either way.
 
+  **Spliced documents.** The same parent's STEP is almost entirely its
+  children's: OCCT writes the root's product tree, then every child's products
+  and geometry exactly as the child's own save emitted them. A saved build
+  therefore writes it from those files instead of exporting its whole document
+  (`store/_splice_step.py`). It generates the parent's own records, OCCT's
+  layout record for record: the header the children share, renamed for the
+  file; the root and group products; one instance block per link. It then
+  copies each child's DATA section verbatim, with its entity ids under a
+  fixed-width prefix and its literals untouched. NAUO instance ids run 1..N in
+  file order. A translated link rewrites its leaf placements' points to the
+  text the writer prints for the parent's leaf translations, once the emulation
+  reproduces each child's own text.
+
+  It splices only when all of this holds, and exports otherwise:
+  - no geometry of its own;
+  - uncoloured pure-translation links;
+  - each child linked once (OCCT shares a repeated child, a splice would copy
+    it);
+  - every child's file still has the bytes its record pins;
+  - one writer and kernel wrote every child, in the same units;
+  - names the writer spells without escape directives;
+  - ids below 10^9;
+  - OCCT's layout is recognised at every record the splice reads.
+
+  A forced build exports. The build reports which ran as `stepSpliced`.
+
+  The spliced file's cold compile is the exported file's, and the composed
+  tree binds to it as to any other bytes; `CADGEN_VERIFY_READBACK=1` proves
+  that on a corpus. Its bytes differ from OCCT's:
+  - ids are numbered differently;
+  - geometry that two children share is written once per child;
+  - the root context's uncertainty is the first child's.
+
+  Hence `STEP_WRITER_SCHEME` 2. Those bytes are a function of the children's
+  saved bytes. The parent's writer input fixes those, except for the writer
+  that saved a child: a child kept from an earlier writer is spliced as saved,
+  which is a valid document of the same tree.
+
   **Kept documents.** A rebuild may keep its saved document instead of writing
   the same bytes again. The record's `writerInput` is the sha256 of everything
   the saved STEP's bytes are a function of
@@ -749,8 +787,10 @@ Each with the failure it prevents.
   canonicalizes what OCCT emitted: NAUO instance ids, presentation-style
   order, and the sign of zero — `-0.` is rewritten `0.`, because which IEEE
   zero a coordinate lands on follows the operation path that produced it, not
-  the geometry. Prevents: one model writing two documents, so the packages and
-  index entries keyed by the other spelling's bytes are orphaned.
+  the geometry. A spliced STEP (§3) is canonical by construction: its children
+  are, it numbers NAUO instances 1..N, adds no styles and prints no `-0.`.
+  Prevents: one model writing two documents, so the packages and index
+  entries keyed by the other spelling's bytes are orphaned.
 - **Publish rule.** `cadgen.store.publish.decide`: a build rejects replacing a
   current record with a stale one — if the record on disk already reflects the
   closure as it is NOW and the build that finished ran against older sources,

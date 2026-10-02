@@ -69,6 +69,27 @@ def _pinned_child_documents(scene: object) -> dict[str, str]:
     return documents
 
 
+def _pinned_child_steps(scene: object) -> dict[str, object]:
+    """Each child tree the body pinned, mapped to the saved STEP that child's
+    record pins for it, while the record still pins that exact tree. A parent
+    may then be spliced from those files (``cadgen.store._splice_step``)."""
+    from cadgen.store._splice_step import ChildStep
+    from cadgen.store.records import read_record
+
+    steps: dict[str, object] = {}
+    for child in getattr(scene, "store_children", None) or ():
+        model, tree = child.get("model"), child.get("tree")
+        record = read_record(model) if model and tree else None
+        if not record or record.get("tree") != tree or not record.get("stepHash"):
+            continue
+        step_hash = str(record["stepHash"])
+        for path, entry in (record.get("outputs") or {}).items():
+            if Path(path).suffix.lower() in (".step", ".stp") and isinstance(entry, dict) and entry.get("sha256") == step_hash:
+                steps[str(tree)] = ChildStep(Path(path), step_hash)
+                break
+    return steps
+
+
 def _sha256_of(path: Path) -> str:
     import hashlib
 
@@ -517,6 +538,7 @@ def _generate_part_outputs(
                     _internal_source_publication=True,
                     materials=getattr(scene, "materials", None),
                     child_documents=lambda: _pinned_child_documents(scene),
+                    child_steps=lambda: _pinned_child_steps(scene),
                     kept_document=lambda digest: _kept_document(spec, digest, expected_document_pair),
                 )
             if stats.get("documentKept"):

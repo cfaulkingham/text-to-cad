@@ -909,6 +909,7 @@ def build_tree_through_step(
     _internal_source_publication: bool = False,
     materials: object = None,
     child_documents: Callable[[], Mapping[str, str]] | None = None,
+    child_steps: Callable[[], Mapping[str, Any]] | None = None,
     kept_document: Callable[[str], dict[str, Any] | None] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], str]:
     """Write STEP and return ``(result_hash, result_tree, stats, step_hash)``.
@@ -933,6 +934,13 @@ def build_tree_through_step(
     STEP (``cadgen.store._compose_readback``); anything ineligible parses.
     ``CADGEN_VERIFY_READBACK=1`` parses as well and fails the build when a
     reused tree differs from the parse.
+
+    ``child_steps``, called once every child is saved, maps each pinned child
+    tree hash to the saved STEP its record pins (``_splice_step.ChildStep``).
+    With it, the same kind of parent is written by splicing those files instead
+    of exporting its whole document through OCCT
+    (``cadgen.store._splice_step``); ``stats['stepSpliced']`` says which ran.
+    Anything ineligible, and a forced build, exports.
 
     1. Walk the compound (:func:`_walk_compound`): own occurrences, links,
        grouping — and, for each own component, the returned shape.
@@ -1064,16 +1072,34 @@ def build_tree_through_step(
             raise RuntimeError("source result components disappeared before publication")
         if on_preview is not None:
             on_preview(tree_hash, tree)
-    if snapshot is not None:
-        # Like today's already-constructed private document, these owned bytes
-        # survive direct-callback store deletion. Existing wait_children and
-        # pre-callback tree_complete checks still decide their normal failures.
-        # Never resolve a newer pin or consult the authored shapes here.
-        with timed("tree: prepare document"):
-            document = prepared_document.materialize(root_name)
-    with timed(f"tree: assemble STEP {step_path.name}"):
-        step_path.parent.mkdir(parents=True, exist_ok=True)
-        step_hash = export_build123d_step_file(document, step_path, logger=logger)
+    # Every child is saved once the callback returns, so an all-link parent may
+    # be written from their saved files: its STEP is almost entirely theirs.
+    step_hash = None
+    if child_steps is not None and not force and not walk.shapes:
+        from cadgen.store._splice_step import Ineligible, splice_step
+        from cadgen.store.trees import flatten
+
+        try:
+            with timed(f"tree: splice STEP {step_path.name}"):
+                step_hash = splice_step(
+                    out=step_path, root_name=root_name, tree=tree, descriptor=descriptor,
+                    children=child_steps(), child_descriptor=flatten,
+                )
+        except Ineligible as reason:
+            if logger is not None:
+                logger.debug(f"{step_path.name} spliced from its children: no ({reason})")
+    stats["stepSpliced"] = step_hash is not None
+    if step_hash is None:
+        if snapshot is not None:
+            # Like today's already-constructed private document, these owned bytes
+            # survive direct-callback store deletion. Existing wait_children and
+            # pre-callback tree_complete checks still decide their normal failures.
+            # Never resolve a newer pin or consult the authored shapes here.
+            with timed("tree: prepare document"):
+                document = prepared_document.materialize(root_name)
+        with timed(f"tree: assemble STEP {step_path.name}"):
+            step_path.parent.mkdir(parents=True, exist_ok=True)
+            step_hash = export_build123d_step_file(document, step_path, logger=logger)
     # The private document has done its work once the STEP is written: the
     # read-back below parses the file and never consults it. Release it (and
     # the prototypes the bounded path validated) before the parse, so a large
@@ -1224,7 +1250,7 @@ def _verify_reused_readback(
 #: The saved-STEP writer's own version (``writerInput``, STORE.md §3). Bump it
 #: with any change to the bytes cadgen writes for the same descriptor: XCAF
 #: construction, the header, or a canonicalization pass.
-STEP_WRITER_SCHEME = "cadgen-step-writer-1"
+STEP_WRITER_SCHEME = "cadgen-step-writer-2"
 # Finishes ride the sidecar, never the STEP (README law 16).
 _FINISH_KEYS = ("material", "materialId", "materialName", "baseColor")
 
