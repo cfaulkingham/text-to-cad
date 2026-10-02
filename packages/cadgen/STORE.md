@@ -44,7 +44,7 @@ One word per concept; the code uses these words and no others.
 | **index** | the input-addressed side of the store: records, bounds, mesh entries |
 | **closure** | what a model's build depended on: the source it reaches, the files it read, the folders it listed, and the files its imports rely on not existing |
 | **stale / current**, **gate** | the freshness state and the check that decides it |
-| **claim** | what a write does to an object it finds already present: its mtime becomes now, so the sweeper's grace window covers it (§8) |
+| **claim** | what a write does to an object it finds already present: its mtime becomes now, less two ticks of its clock, so the sweeper's grace window covers it and the claiming process keeps what it verified of it (§8) |
 | **evict** | drop a derived entry to keep the store under its cap; only the derived kinds are ever evicted (§8) |
 | **worker / spare / extra**, **job** | daemon vocabulary (the daemon's own documentation) |
 
@@ -750,12 +750,20 @@ build evaluates the gate many times over the same closures, and a large
 assembly's STEP is hundreds of megabytes. A later evaluation stats each file and
 reuses the verdict while the file keeps the identity (device, inode, size, mtime,
 ctime) observed around its verified read, under §10's settled-stamp rule.
-Deleting, replacing, truncating or rewriting a file verifies it again. A build's
-own checks of its saved document and sidecar — before the body runs, before it
-publishes, after its rename — read through the same memo, and a document the
-build renames into place is remembered by the digest its writer took: a rename
-keeps the written file's device, inode, size and mtime, so a path that still
-shows that identity, settled before the rename, holds those bytes.
+Deleting, replacing, truncating or rewriting a file verifies that file again,
+and only it: an object still at its verified identity is taken on that
+identity, and a linked tree whose whole closure holds is taken as verified, so
+a child another process rebuilt costs the parent's next evaluation that
+child's closure and the parent's own tree, and clause 4 reads nothing clause 3
+just verified (§10). A build's own checks of its saved document and sidecar — before the body
+runs, before it publishes, after its rename — read through the same memo, and
+a document the build renames into place is remembered by the digest its writer
+took: a rename keeps the written file's device, inode, size and mtime, so a
+path that still shows that identity, settled before the rename, holds those
+bytes. Its checks of its result — after it publishes the tree, when it
+announces it, when it claims its record's closure, in the already-stale notice
+— take the verification the job already holds; the claims keep it (§8). A
+publish reads nothing of a closure its job verified.
 
 A job asks the gate once before its body. That verdict answers the no-op check,
 the check for a peer that published meanwhile, the annotation refresh and the
@@ -916,11 +924,12 @@ Each with the failure it prevents.
   every build that only hits it, which the last-use stamps an earlier
   eviction wrote on each hit did.
 - **A write claims what it reuses.** Bytes a write finds already present are
-  claimed (their mtime becomes now) instead of skipped, and a publish claims
-  its record's whole closure before it writes the record; the sweeper deletes
-  only by rename, then recheck (§8). Prevents: a sweep that began before a
-  publish deleting an object the new record reuses, out of a grace window
-  that never saw the reuse.
+  claimed (their mtime becomes now, less two ticks of the clock that stamps
+  them, §8) instead of skipped, and a publish claims its record's whole
+  closure before it writes the record; the sweeper deletes only by rename,
+  then recheck (§8). Prevents: a sweep that began before a publish deleting an
+  object the new record reuses, out of a grace window that never saw the
+  reuse.
 - **No locks are needed for correctness.** Objects are idempotent, entries
   are temp+rename, the publish rule decides concurrent same-model outcomes,
   pins isolate parents. There is no lock layer (§7); two builders of one
@@ -1159,8 +1168,27 @@ before the rename shows there, and the object goes back; a claim made after it
 finds the object gone and writes the bytes again, or fails the publish when it
 holds none -- never writing a record that names a missing object. So a pass may
 run beside builds without a lock. The grace window is the whole protection for
-a pin a build holds before its publish, so do not sweep with `--grace-hours 0`
-while anything is building.
+a pin a build holds before its publish, so do not sweep with `--grace-hours 0`,
+or a window of a few seconds, while anything is building.
+
+**A claim stamps the recent past, and keeps what was verified.** A claim sets
+the object's mtime to now less two ticks of the clock its previous stamp shows
+(`objects._claim`: 62.5 ms where stamps carry nanoseconds, 2 s on a
+whole-second clock, 4 s on FAT) -- within any grace window a sweep may use,
+and settled as it is set, since a later write must land in a newer tick. The
+publishing process verified most of what it claims moments before (§4), and a
+claim is the one write it makes to an object it has verified, so a claim
+carries the verified identity (§10) forward instead of losing it: the stamp
+before the claim must be the verified one (nothing wrote the file since the
+read) and the stamp after it the claim's own, on the same device, inode and
+size; otherwise the identity is forgotten and the next reader hashes the
+bytes. What a foreign writer could do to the file in the microseconds between
+that stat and the claim's own timestamp write is beyond any stamp; cadgen's
+own writers never rewrite an object in place (temp + rename, §11), and a
+reader that uses an object's bytes hashes them. A publish therefore claims on
+identity what its job verified, reading nothing, and holds the bytes only of
+what its own capture had to read -- which is what a claim that finds its object
+gone writes back.
 
 **A store two cadgens share.** Every cadgen on a machine uses the same store
 by default, and a pass can only judge what it can read. A newer cadgen's
@@ -1620,9 +1648,17 @@ supersession does not cancel their exports.
   perform the same complete verification while releasing each raw object after
   reading it. Compact process-local metadata may be reused while every required
   immutable object retains the file identity observed around its verified read;
-  deletion, damage or atomic replacement invalidates that snapshot and makes the
-  next request verify the complete byte closure again. A read is only remembered
-  once it is far enough past the write it observed that a further write must
+  deletion, damage or atomic replacement invalidates that snapshot, and the
+  next request verifies again, by hash, what moved and takes on its identity
+  what still holds: each object this process hashed to its address is
+  remembered under the settled identity it had (`objects.verified_stamp`),
+  each tree it verified under its whole closure, and a component entry
+  already validated against its object's bytes needs no bytes while the
+  object holds. A native capture (`retain_payloads=True`) reads every object,
+  since it owns the bytes, and remembers what it verified all the same. A
+  claim by this process keeps an identity (§8); any other write moves it. A
+  read is only remembered once it is far enough past the write it observed
+  that a further write must
   stamp a different mtime — a filesystem times writes by a clock of its own
   resolution (~15.6 ms on Windows, whose `st_ctime` is the creation time and
   never moves for a rewrite; a 100 Hz timer interrupt on Linux before 6.13,

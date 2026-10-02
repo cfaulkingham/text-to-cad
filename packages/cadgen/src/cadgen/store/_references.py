@@ -69,7 +69,10 @@ def attach_child(child: Any, parent: Any) -> bool:
     # A current pin was resolved at the decorated call.  One verified snapshot
     # owns every use of that exact tree within this private construction.  A
     # queued job still resolves in ordinary order, even if another input already
-    # captured the tree it eventually returns.
+    # captured the tree it eventually returns. Only the descriptor is used here:
+    # the prototypes decode from the objects when they are read (source_scene),
+    # so the bytes are not retained, and a closure the gate verified is not
+    # read again.
     tree = child.__dict__.get("_lazy_tree")
     if tree is None:
         tree = child.tree_hash()
@@ -77,7 +80,7 @@ def attach_child(child: Any, parent: Any) -> bool:
     snapshot = descriptors.get(tree)
     if snapshot is None:
         try:
-            snapshot = capture_tree(tree)
+            snapshot = capture_tree(tree, retain_payloads=False)
         except (OSError, ValueError):
             child.tree_hash()  # preserve the ordinary missing-pin diagnostic
             raise
