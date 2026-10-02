@@ -472,7 +472,7 @@ test('Select picks parts and faces, a selection lives only under Select, and the
   assert.deepEqual(errors, []);
 });
 
-test('under Faces or Edges, one press on a part whose faces are not loaded loads that part alone and picks what is under the pointer', async () => {
+test('under Faces or Edges, one press on a part whose faces are not loaded loads that part alone and picks what is under the pointer, and an update keeps the mode', async () => {
   const view = await open();
   const { page, pane, at, errors } = view;
   const reference = pane.getByRole('region', { name: 'Reference details', exact: true });
@@ -513,6 +513,10 @@ test('under Faces or Edges, one press on a part whose faces are not loaded loads
   assert.ok(await page.evaluate(() => window.__sawLoading.length) > sawBefore, 'only the pressed part had loaded');
   const edge = (await selected())[0].split('|').at(-1);
   assert.match((await reference.innerText()).replace(/\s+/g, ' '), new RegExp(`^arm · edge ${edge.replace(/^.*\.e/, '')} Type Edge.*ID ${edge.replace(/\./g, '\\.')}`));
+  // An update of the model keeps the mode, and drops what was picked in the revision before it.
+  await view.update();
+  assert.equal(await view.tool('Select').locator('[data-select-mode]').getAttribute('data-select-mode'), 'edges');
+  assert.deepEqual(await selected(), []);
   assert.deepEqual(errors, []);
 });
 

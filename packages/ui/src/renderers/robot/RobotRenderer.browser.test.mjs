@@ -587,7 +587,8 @@ test('a pose and the open panel survive closing the file, and a pose is dropped 
   const links = await robot.links();
   assert.equal(round6(translation(links.carriage)[2]), 0.35, 'and the robot on screen is in that pose');
 
-  // A new revision behind the mounted robot keeps the pose it is in; a record from another revision is not restored.
+  // A record written against another revision is not restored. (A new revision behind the mounted robot
+  // keeps its pose only while its joints and named poses are unchanged: `RobotTools.test.tsx`.)
   await page.evaluate(() => window.cadHarness.mounted(false));
   revision += 1;
   t.after(() => { revision = 1; });

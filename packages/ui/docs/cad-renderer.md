@@ -457,7 +457,8 @@ loader asks which it is. The STEP renderer matches none of them.
   distinct link mesh (`loadRenderMeshByUrl`, at most eight at a time). Progress reads "Loading URDF", "Loading meshes 3/13",
   "Building robot". The robot is published once, whole. A missing link mesh fails
   the load. A warm file is on screen on the first render; a new revision loads
-  behind the robot on screen and keeps the pose it was left in. An SRDF with no
+  behind the robot on screen and keeps the pose it was left in while its driven joints and
+  named poses are unchanged, and opens at its opening pose when they changed. An SRDF with no
   URDF paired (the catalog pairs the ONE `.urdf` in the same folder whose
   `<robot name>` matches) raises an alert that names what was looked for.
 - **Look**: a robot authors no finish, so Solid wears the viewer's surface and
@@ -1131,9 +1132,13 @@ to Select first. No other tool ever sees a selection, so none needs a rule for o
 ### Position
 
 Position edits persist when switching tools or tabs, or closing the panel. A STEP
-rebuild keeps them, and keeps Position the tool: the sidecar it writes again is read
-behind the kinematics in hand (`workbench/useStepMotion.js`), and Position goes only
-when that sidecar has nothing left to move. Reset
+rebuild keeps Position the tool while its sidecar is read again behind the kinematics in
+hand (`workbench/useStepMotion.js`), and keeps the values, and the named pose they were
+chosen as, when the new sidecar's joint parameters and named poses are the ones in hand
+(`stepPoseLogic`, `workbench/stepModuleLoad.js`); when they changed, the pose starts at the
+new defaults — the old values are never fitted onto other joints. A robot's new revision
+follows the same rule over its driven joints and named poses (`poseLogic`,
+`robot/poseStore.js`). Position goes only when the sidecar has nothing left to move. Reset
 explicitly restores STEP defaults or the robot opening pose (including SRDF `home`).
 The Position tool controls joint handles and shows its panel.
 A routine playing in preview sets the Position values aside when it takes the pose and gives them
@@ -1247,7 +1252,10 @@ so selection, topology and the Position controls never meet an animated model. O
 playback only the transport preferences survive leaving — the routine, Speed and
 Loop, kept by a Position edit too (`activatePositionControls` in
 `useStepMotionControls.js`) for as long as the file is mounted: the next preview plays that
-routine from the start. The routine and its time are not saved: a reopened file starts
+routine from the start. An update of the model that leaves its routines as they were (the
+same `animationHash`) neither stops nor rewinds one that is playing: `useStepMotion` compiles
+routines per `animationKey`, never per catalog entry, and only a changed routine is compiled
+again, at rest. The routine and its time are not saved: a reopened file starts
 at rest, with the Speed and Loop its Playback settings chose, if any. A routine that failed to
 load has no Playback settings to say so in; the viewport's card says
 `Animation unavailable`, and can be dismissed.
@@ -1313,8 +1321,13 @@ plane through the orbit target tracks the ink exactly. The camera keeps its
 panned pose when Draw ends.
 
 A sketch is session-only. It lives in the mounted editor, is never written to
-tab or file state, and is discarded when Draw is deselected, the file changes or
-the renderer unmounts; a restored tab never reopens in Draw. While the sketch has
+tab or file state, and is discarded when Draw is deselected, the file changes, the
+model updates under it, or the renderer unmounts; a restored tab never reopens in Draw.
+An update (a new STEP revision, StepSurface's same-file revision branch) discards it
+with `drawing.discard()`: the session mounts a new editor (`drawing.sketch` keys it), so
+the ink's history goes with it and Undo cannot bring the ink back over the new model,
+while Draw stays the tool, on the tool, colour and weight in hand. The editor's own
+`clear()` is an undoable step, so it is not used for this. While the sketch has
 ink, the Drawing panel ends in a full-row **Copy Drawing**, with the copy shortcut beside it (⌘C or
 Ctrl+C does the same): the viewport capture with the editor's committed ink
 composited over it viewport-aligned (the ink canvas keeps its own pixel ratio and is

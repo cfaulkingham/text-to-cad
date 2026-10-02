@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { advanceAnimationElapsed, animationClipDuration, animationNowMs,
   clampAnimationElapsed, clampAnimationSpeed, findAnimationClip, firstAnimationClipId,
   shouldPublishAnimationFrame } from "@text-to-cad/core/common/animationClock.js";
 import { normalizeParameterValue, normalizeParameterValues } from "@text-to-cad/core/common/parameters.js";
 import { poseValuesForPreset } from "../components/workbench/PoseControlsSection.js";
 import { useAnimationClockStore } from "./animationClockStore.js";
+import { stepPoseLogic } from "./stepModuleLoad.js";
 
 // Single command boundary for STEP motion. Refs are published synchronously so
 // queued playback callbacks cannot resurrect the previous motion owner.
@@ -30,9 +31,12 @@ export function useStepMotionControls({
   }, [selectedStepModuleDefinition, setAppliedStepPoseName, writeParameters]);
   // What Position had set when a routine took the pose. A routine plays from the model at rest,
   // so taking the pose puts Position's values aside rather than throwing them away; handing
-  // the pose back (leaving preview, or touching Position) puts them back first.
+  // the pose back (leaving preview, or touching Position) puts them back first. They are a pose
+  // like any other: an update whose joints and named poses are unchanged keeps them (a routine
+  // may play on through it), and one that changed them drops them.
   const heldPositionRef = useRef(null);
-  useEffect(() => { heldPositionRef.current = null; }, [selectedStepModuleDefinition]);
+  const poseLogic = useMemo(() => stepPoseLogic(selectedStepModuleDefinition), [selectedStepModuleDefinition]);
+  useEffect(() => { heldPositionRef.current = null; }, [poseLogic]);
   // Handing the pose to Position stops the routine and rewinds its clock, and nothing more: the
   // transport preferences preview's Playback settings set (the routine, its speed, the loop) are the
   // person's, and a joint nudge or a trip to another tool keeps them for the next play.

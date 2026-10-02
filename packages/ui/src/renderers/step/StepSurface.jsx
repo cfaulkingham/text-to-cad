@@ -864,6 +864,9 @@ function StepSurfaceBody({ view, data }) {
 
     if (stepChanged) {
       resetSelectionForStepUpdate();
+      // Ink drawn over the previous revision does not describe this one: the sketch goes, and its
+      // history with it, so Undo cannot bring it back over the new model. Draw stays the tool.
+      shellRef.current?.frame.drawing.discard();
       setStepUpdateInProgress(true);
     } else if (!sameEntry) {
       setStepUpdateInProgress(false);
@@ -871,7 +874,9 @@ function StepSurfaceBody({ view, data }) {
 
     selectedEntryBuildSnapshotRef.current = {
       fileRef,
-      stepHash
+      // A rewritten STEP is listed with no hash until it is built: the revision on screen stays the
+      // last one, so the build that lands after the gap still reads as an update.
+      stepHash: stepHash || (sameEntry ? previous.stepHash : "")
     };
   }, [
     resetSelectionForStepUpdate,
@@ -979,9 +984,18 @@ function StepSurfaceBody({ view, data }) {
   ) ? selectedSelectorRuntime : null;
   const artifactRevision = buildReferenceCacheKey(selectedEntry);
 
+  // The Select mode is the person's for as long as the file is open: another file starts in All,
+  // an update of this one keeps it (its tree is shaped by it again below, `changeSelectMode`).
   useEffect(() => {
     setSelectionFilter("all");
-  }, [selectedKey, artifactRevision]);
+  }, [selectedKey]);
+  // A mode the file no longer offers goes back to All: Parts, once an update has made the file a
+  // single part. Only a built entry says what the file is: one between builds (no hash) is
+  // listed as a part whatever it holds.
+  const selectedKindKnown = Boolean(selectedEntry?.hash);
+  useEffect(() => {
+    if (selectedKindKnown && !isAssemblyView) setSelectionFilter(current => (current === "parts" ? "all" : current));
+  }, [selectedKindKnown, isAssemblyView]);
   const selectedStepParameterRuntime = useMemo(() => {
     if (
       !selectedStepModuleDefinition ||
@@ -1870,6 +1884,23 @@ function StepSurfaceBody({ view, data }) {
     }
     setSelectionFilter(next);
   }, [selectionFilter, displayStepTreeRoot, stepTreeRoot, expandedStepTreeNodeIds, isAssemblyView, referencePartId, effectiveActiveReferenceMap]);
+  // The mode outlives an update, and so does the shape it gives the tree: when an update brings
+  // other assemblies under Parts, Faces or Edges, the tree is opened as `changeSelectMode` opened
+  // the last one, so an assembly the update added is not left shut under a disclosure the mode
+  // locks. It answers to the assemblies changing, not to every new tree object.
+  const treeAssemblyIds = useMemo(() => (stepTreeRoot ? collectStepTreeAssemblyNodeIds(stepTreeRoot) : EMPTY_LIST), [stepTreeRoot]);
+  const treeAssemblyKey = treeAssemblyIds.join("\n");
+  const selectModeRef = useRef({ mode: selectionFilter, assembly: isAssemblyView, assemblies: treeAssemblyIds });
+  selectModeRef.current = { mode: selectionFilter, assembly: isAssemblyView, assemblies: treeAssemblyIds };
+  useEffect(() => {
+    const { mode, assembly, assemblies } = selectModeRef.current;
+    // Parts on a file that is no longer an assembly is going back to All (above): nothing to shape.
+    if (mode === "all" || (mode === "parts" && !assembly) || !assemblies.length) return;
+    setExpandedStepTreeNodeIds(current => {
+      const next = mode === "parts" ? assemblies : uniqueStringList([...current, ...assemblies]);
+      return orderedStringListEqual(next, current) ? current : next;
+    });
+  }, [treeAssemblyKey]);
 
   const removeSelectedAssemblyNode = useCallback((nodeId) => {
     const normalizedNodeId = String(nodeId || "").trim();

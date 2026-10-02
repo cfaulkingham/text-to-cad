@@ -157,7 +157,9 @@ at full size. The strip's Select button shows the mode in hand as ONE composite:
 the pointer, with the mode's glyph shrunk to a badge in its top-right corner
 (cut out of the pointer so the two never touch at the strip's 14px), and the
 bare pointer for All (`data-select-mode`). One drawing of each glyph serves
-both sizes (`SelectionModes.jsx`). Parts is offered only in an assembly. Under the modes,
+both sizes (`SelectionModes.jsx`). Parts is offered only in an assembly. The mode in
+hand is kept while the file is open, across updates of it (an update that leaves no
+assembly puts Parts back to All); another file opens in All. Under the modes,
 checkboxes — **Group edges** and **Group faces** — change how a pick grows,
 independently of the mode and of each other: Group faces applies under All
 and Faces, Group edges under All and Edges. Only the options that apply under the
@@ -187,7 +189,9 @@ Medium, Bold — a shape's 1, 2 or 4px, the pen drawn to look the same weight),
 Undo, Redo and Clear; both are grids of 24px columns spread across the panel's
 width, their columns lined up, with no menu and no inset beyond the panel's own.
 Leaving Draw forgets the sketch, but not the tool, colour and weight in hand,
-which the next time opens with. Choosing a drawing tool changes the toolbar
+which the next time opens with. An update of the model forgets it too, its history
+with it (Undo has nothing to bring back), and leaves Draw the tool, on the tool,
+colour and weight in hand. Choosing a drawing tool changes the toolbar
 icon. Undo and Redo are disabled when their history is empty. The select tool uses lucide's
 SquareMousePointer. The pencil and the shapes share one default stroke width.
 Once there is ink, the Drawing panel ends in a full-row **Copy Drawing**, which
@@ -459,7 +463,10 @@ hint and never take the slider's width. Slider thumbs are named after their
 joint, and every slider reports its value at its step's precision (never float
 noise). Writes pose the model at once.
 
-Position persists across tools. Reset restores the authored
+Position persists across tools, and across an update of the model whose joints and
+named poses are unchanged, the named pose chosen included; an update that changed them
+starts the pose at the new defaults, never fitting the old values onto other joints.
+Reset restores the authored
 values (an SRDF's home included), stops motion and hands control back to
 Position. A routine playing in preview sets the Position values aside and gives
 them back on leaving it. A Position edit, Reset included, stops and rewinds a
@@ -594,8 +601,9 @@ nothing there. These controls and the corner share one one-second idle deadline 
 Routines play in preview alone: there is no Animate tool. Entering preview
 starts the routine when Autoplay is on (off by default); leaving it stops the
 routine and puts the model back at rest, keeping the Routine for the next time
-while the file is open. Everything in Playback settings is the file's own and is
-remembered between leaving and re-entering preview and across a reload of the tab:
+while the file is open. An update of the model that leaves its routines as they were
+neither stops nor rewinds one that is playing; a changed routine starts at rest.
+Everything in Playback settings is the file's own and is remembered between leaving and re-entering preview and across a reload of the tab:
 Orbit on or off (on by default) and its speed (1×), Autoplay, and a Speed or Loop
 once chosen — until one is chosen, the routine's own apply. Another file has its
 own. Nothing of the routine — which one, its time, whether it plays — is saved.

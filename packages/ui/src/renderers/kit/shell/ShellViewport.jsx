@@ -344,7 +344,7 @@ const ShellViewport = forwardRef(function ShellViewport({
   const hasViewportContent = Boolean(scene);
   const drawingOverlayActive = drawingEnabled && !previewMode && hasViewportContent;
   const { drawingControllerRef, handleDrawingContent, handleDrawingReady, followDrawingViewport } = useDrawingViewLock({
-    active: drawingOverlayActive, drawing, runtimeRef, mountRef, viewerReadyTick
+    active: drawingOverlayActive, sketch: drawing?.sketch ?? 0, drawing, runtimeRef, mountRef, viewerReadyTick
   });
 
   useImperativeHandle(ref, () => ({
