@@ -142,6 +142,9 @@ test('a shell renderer restores isolated view state on a remount', async (t) => 
   assert.ok(catalogFiles.some(({ root, file }) => root === 'one' && file === 'part.stl'), 'the deferred file was resolved by name');
 
   // The camera is moved through the live controller: there is no zoom control in the viewer to press.
+  // A view refuses commands until it has drawn its file (`liveBinding.ts`), which a software GL
+  // takes longer to do than the stored record above takes to be written: wait for it, as for pane b.
+  await page.waitForFunction(() => window.cadHarness.a.controller?.readState().loading === false);
   await page.evaluate(async () => {
     const controller = window.cadHarness.a.controller;
     await controller.setCamera({ ...controller.readState().camera, zoom: 1.1 });
