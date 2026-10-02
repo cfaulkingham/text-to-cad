@@ -487,19 +487,16 @@ def _generate_part_outputs(
             if cached is not None:
                 return copy.deepcopy(cached)
             from cadgen._internal.kinematics_resolve import resolve_kinematics_block
-            from cadgen.store.view import export_view
 
-            view_dir = export_view(result_hash)
-            try:
-                with logger.timed("tree: kinematics"):
-                    resolved, _ = resolve_kinematics_block(
-                        declaration, package_dir=view_dir, step_path=spec.step_path,
-                        source_ref=str(spec.source_ref),
-                    )
-                resolved_kinematics[result_hash] = copy.deepcopy(resolved)
-                return copy.deepcopy(resolved)
-            finally:
-                shutil.rmtree(view_dir, ignore_errors=True)
+            # Mates resolve against the result's occurrences and labels; only an
+            # axis ref reads a component's topology, and only its own.
+            with logger.timed("tree: kinematics"):
+                resolved, _ = resolve_kinematics_block(
+                    declaration, tree_hash=result_hash, source_ref=str(spec.source_ref),
+                    producer=surface_producer,
+                )
+            resolved_kinematics[result_hash] = copy.deepcopy(resolved)
+            return copy.deepcopy(resolved)
 
         def publish_preview(result_hash: str, _tree: dict):
             if spec.source == "generated":

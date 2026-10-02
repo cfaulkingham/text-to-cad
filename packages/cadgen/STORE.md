@@ -284,7 +284,12 @@ identity. A real one (`link_arm`: a bar plus two placements of a pin model):
   no source, model record, latest child or live authored shape is consulted.
   Geometry reads, STEP re-emits and parent materialization do not derive SURF.
   First display or selector demand pays that work when its disposable result
-  is absent; faster native reads do not imply faster first display.
+  is absent; faster native reads do not imply faster first display. A build's
+  kinematics are selector demand only where a selector is named: a mate's
+  parent and child resolve in the result tree's occurrences, group nodes and
+  their labels, with no component read, and an `axis={"ref": ...}` reads the
+  SURF of the one component its occurrence places
+  (`_internal/kinematics_resolve.py`).
 
 - `assembly.root` is the grouping the author's compound expressed; a link
   appears in it as a node of type `link`.
