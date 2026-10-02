@@ -14,11 +14,9 @@ finishes only while the file is the one it saved with that tree -- never an auth
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from pathlib import Path
-from urllib.parse import urlencode
 
 from cadgen.store.paths import store_root
 
@@ -113,7 +111,7 @@ def _document_preview(job: dict, target: str) -> dict | None:
         return None
     from .scanner import _store_asset_url
 
-    url = _store_asset_url(tree)
+    producer = None
     if announced.get("surfaceProducer") is not None:
         from cadgen.store.surfaces import producer_fields
 
@@ -121,9 +119,8 @@ def _document_preview(job: dict, target: str) -> dict | None:
             producer = producer_fields(announced["surfaceProducer"])
         except (ValueError, TypeError):
             producer = None
-        if producer is not None:
-            url += "&" + urlencode({"surfaceProducer": json.dumps(producer, sort_keys=True, separators=(",", ":"))})
-    return {"tree": tree, "url": url}
+    # The catalog's URL for the file once its build has saved it (scanner._store_asset_url).
+    return {"tree": tree, "url": _store_asset_url(tree, producer=producer)}
 
 
 def _superseded(job: dict, target: str) -> bool:

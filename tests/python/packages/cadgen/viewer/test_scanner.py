@@ -231,10 +231,41 @@ class StoreResults(ScannerTestCase):
         self.assertEqual(entry["kind"], "part")
 
     def test_the_store_file_param_names_the_tree_with_no_leading_slash(self):
+        from urllib.parse import parse_qs, urlparse
+
         self.write("p.step", "x\n")
         tree = self.package("p.step", {"kind": "assembly-package", "components": {"c0": {}}})
         entry = self.entry("p.step")
-        self.assertEqual(entry["url"], f"/__cad/store?file={tree}&documentHash={entry['documentHash']}")
+        self.assertTrue(entry["url"].startswith(f"/__cad/store?file={tree}&"))
+        self.assertEqual(parse_qs(urlparse(entry["url"]).query)["file"], [tree])
+
+    def test_a_document_with_no_attested_producer_is_named_by_its_bytes(self):
+        from cadgen.store.index import write_entry
+        from cadgen.store.records import DOCUMENT_SCHEMA_VERSION
+
+        self.write("p.step", "x\n")
+        tree = self.package("p.step", {"kind": "assembly-package", "components": {"c0": {}}})
+        document = hashlib.sha256(Path(self.root, "p.step").read_bytes()).hexdigest()
+        write_entry("document", document, {"schemaVersion": DOCUMENT_SCHEMA_VERSION, "tree": tree, "kind": "step"})
+        entry = self.entry("p.step")
+        self.assertEqual(entry["url"], f"/__cad/store?file={tree}&documentHash={document}")
+
+    def test_a_document_attesting_its_producer_is_named_as_its_build_feed_named_it(self):
+        from cadgen.store.records import note_document_tree
+        from cadgen.store.surfaces import EXTRACTION_SCHEME, SURF_FORMAT
+        from cadgen.viewer.preview import _document_preview
+
+        self.write("p.step", "x\n")
+        tree = self.package("p.step", {"kind": "assembly-package", "components": {"c0": {}}})
+        document = hashlib.sha256(Path(self.root, "p.step").read_bytes()).hexdigest()
+        producer = {"scheme": EXTRACTION_SCHEME, "surfFormat": SURF_FORMAT, "build123d": "0.9",
+                    "ocp": "7.8.1", "cadqueryOcp": "7.8.1"}
+        note_document_tree(document, tree, surface_producer=producer)
+        entry = self.entry("p.step")
+        self.assertNotIn("documentHash=", entry["url"])
+        # The URL the build's feed gave this tree before the file was written: one view, one URL.
+        job = {"state": "building", "documentPreviews": {"out": {"tree": tree, "surfaceProducer": producer}}}
+        self.assertEqual(entry["url"], _document_preview(job, "out")["url"])
 
     def test_hash_and_bytes_describe_the_flattened_tree_not_the_step(self):
         from cadgen.viewer.store_paths import result_descriptor
