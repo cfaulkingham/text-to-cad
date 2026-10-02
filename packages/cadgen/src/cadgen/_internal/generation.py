@@ -258,44 +258,29 @@ def _existing_topology_artifact_matches_options(spec: EntrySpec, selector_option
     return bool(_package_descriptor_matches_spec(spec, selector_options))
 
 
-def _assembly_provenance_manifest(
-    scene: LoadedStepScene,
-    *,
-    selector_options: SelectorOptions,
-    step_path: Path,
-) -> dict[str, object]:
-    """The index-manifest provenance an assembly.json carries, mirroring
-    the monolithic GLB's embedded STEP_topology index — but WITHOUT the expensive
-    selector extraction. Sourced from the scene (sourceKind/closure), the edge-render
-    options, and the STEP hash, so the build freshness gates can read it from
-    assembly.json exactly as they read the monolithic manifest.
+def _assembly_provenance_manifest(selector_options: SelectorOptions) -> dict[str, object]:
+    """The content-pure fields a generated tree carries: its edge capabilities
+    and the edge classes it was built with (``tree_extra`` below takes exactly
+    these two).
 
     There is no ``mesh`` section. A tree stores surfaces, not
     triangles; the client tessellates from ``.surf`` with the JS tessellator's
     own relative tolerances. The deflection numbers this block used to carry
     reached no mesher, and the adaptive ``resolution`` beside them was the
     INPUT to a decision whose output — ``edgeRendering.visibilityClasses`` — is
-    recorded right here.
+    recorded right here. No STEP hash either: nothing read it, and computing it
+    read the whole saved document once per build.
     """
 
     from cadgen._internal.glb_topology import step_topology_capabilities
 
     # STEP-pure by contract: nothing here may derive from the Python source.
     # Source-derived state (provenance, pose, mates) rides the source sidecar
-    # (_source_sidecar_payload below) — the assembly.json is the cache engine's
-    # world and keys on the STEP bytes alone.
-    minimal: dict[str, object] = {
+    # (_source_sidecar_payload below) — the tree keys on geometry alone.
+    return build_step_topology_index_manifest({
         "capabilities": step_topology_capabilities(selector_options.edge_visibility_classes),
         "edgeRendering": {"visibilityClasses": list(selector_options.edge_visibility_classes)},
-    }
-    step_hash = (
-        step_file_hash(step_path)
-        if step_path.is_file()
-        else str(getattr(scene, "step_hash", "") or "").strip()
-    )
-    if step_hash:
-        minimal["stepHash"] = step_hash
-    return build_step_topology_index_manifest(minimal)
+    })
 
 
 def _source_sidecar_payload(scene: LoadedStepScene) -> dict[str, object] | None:
@@ -430,9 +415,7 @@ def _generate_part_outputs(
     # else is one component. No declaration steers it and nothing is inferred from
     # source — the tree's entryKind is read off the tree once built.
     source_compound = getattr(scene, "source_compound", None)
-    package_provenance = {} if raw_document else _assembly_provenance_manifest(
-        scene, selector_options=selector_options, step_path=spec.step_path
-    )
+    package_provenance = {} if raw_document else _assembly_provenance_manifest(selector_options)
     if getattr(scene, "disposable_prototypes", False):
         # The reference scene's decoded prototypes have classified the topology
         # (the edge policy above); everything after this reads geometry from

@@ -90,6 +90,23 @@ class StepPublicationTests(unittest.TestCase):
             self.assertEqual(self.build(12, annotated=True), 0, self.output)
         check.assert_not_called()
 
+    def test_tree_metadata_does_not_hash_the_saved_step(self) -> None:
+        # The tree takes its edge capabilities and classes from the provenance
+        # manifest and nothing else; hashing the saved document for it read the
+        # whole file once per build.
+        from cadgen._internal import generation
+        from cadgen.store.records import read_record
+        from cadgen.store.trees import get_tree
+
+        self.assertEqual(self.build(10), 0, self.output)
+        with mock.patch.object(generation, "step_file_hash",
+                               side_effect=AssertionError("hashed the saved STEP for tree metadata")):
+            self.assertEqual(self.build(12), 0, self.output)
+        tree = get_tree(read_record(f"{self.model}::part")["tree"])
+        self.assertTrue(tree["edgeRendering"]["visibilityClasses"])
+        self.assertIn("edgeClassification", tree["capabilities"])
+        self.assertNotIn("stepHash", tree)
+
     def test_failed_readback_keeps_the_saved_pair(self) -> None:
         self.assertEqual(self.build(10), 0, self.output)
         before = self.step.read_bytes()
