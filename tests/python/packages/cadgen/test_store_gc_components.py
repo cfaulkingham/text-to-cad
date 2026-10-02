@@ -2,7 +2,6 @@
 from __future__ import annotations
 import os
 from pathlib import Path
-import time
 import unittest
 from unittest import mock
 from tests.python.support.paths import add_repo_path
@@ -16,16 +15,6 @@ class ComponentGcReachability(unittest.TestCase):
         self.store = Path(self.tmp.name) / "store"
         patch = mock.patch.dict(os.environ, {"CADGEN_CACHE_DIR": str(self.store)})
         patch.start(); self.addCleanup(patch.stop)
-
-    def aged(self):
-        """Every file in the store written an hour ago. These tests are about what a pass can reach:
-        a zero grace window must not hinge on time.time() and the file system agreeing on what was
-        written before the pass began (Windows on Python 3.12 reads a 15.6 ms clock but stamps files
-        finer, so an object written just before looks newer than the pass)."""
-        then = time.time() - 3600
-        for path in self.store.rglob("*"):
-            if path.is_file():
-                os.utime(path, (then, then))
 
     def seed(self):
         from tests.python.support.store_fixtures import seed_result
@@ -46,7 +35,6 @@ class ComponentGcReachability(unittest.TestCase):
         remove_entry("document", hashlib.sha256(b"fixture document").hexdigest())
         remove_entry("model", next((self.store / "index/model").iterdir()).name)
         orphan = put_object(b"unreferenced")
-        self.aged()
         report = collect(grace_seconds=0)
         self.assertEqual(report.reachable, 2)
         self.assertTrue(has_object(entry["brep"]))
@@ -79,7 +67,6 @@ class ComponentGcReachability(unittest.TestCase):
         external = put_object(b"external exported mesh")
         note_document_tree("d" * 64, parent)
         note_document_mesh("d" * 64, "stl:variant", external)
-        self.aged()
         report = collect(grace_seconds=0)
         self.assertEqual(report.records, 0)
         self.assertEqual(report.reachable, 3)
@@ -97,7 +84,6 @@ class ComponentGcReachability(unittest.TestCase):
         for kind in ("document", "model", "surface"):
             for key, _ in list(iter_entries(kind)): remove_entry(kind, key)
         write_entry("document", "a" * 64, {"schemaVersion": DOCUMENT_SCHEMA_VERSION - 1, "tree": tree})
-        self.aged()
         self.assertEqual(collect(grace_seconds=0).reachable, 0)
         self.assertFalse(has_object(tree))
 
