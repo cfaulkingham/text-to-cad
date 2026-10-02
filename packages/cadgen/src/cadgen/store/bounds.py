@@ -16,6 +16,12 @@ location of its own). Canonical publication records it while it measures
 those leaves, and composing a parent's document tree from its children's
 (``cadgen.store._compose_readback``) reads it back to name the exact per-leaf
 box keys without decoding the BREP.
+
+It also remembers each component's TOPOLOGY: its face and edge counts, how many
+of each are curved, and its loose box, the per-prototype facts the adaptive
+edge policy classifies a scene by (``step_scene_mesh.prototype_topology``). A
+build of an all-link parent reads them by the BREP its pins name and decodes
+only a component whose entry is missing (``cadgen.store._references``).
 """
 from __future__ import annotations
 
@@ -32,6 +38,9 @@ _ram: OrderedDict[str, Any] = OrderedDict()
 _lock = threading.Lock()
 
 LEAF_LAYOUT_ALGORITHM = "component_leaf_layout.algorithm1"
+#: Names ``step_scene_mesh.prototype_topology``: change what it counts or how
+#: it measures the loose box, and change this name with it.
+TOPOLOGY_ALGORITHM = "component_topology.faces_edges_curved_loose_box.algorithm1"
 
 
 def _is_box(value: Any) -> bool:
@@ -51,6 +60,16 @@ def _is_leaf_layout(value: Any) -> bool:
     return (type(value) is dict and set(value) == {"leaves", "placed"}
             and type(value["leaves"]) is int and value["leaves"] >= 1
             and type(value["placed"]) is bool)
+
+
+def _is_topology(value: Any) -> bool:
+    counts = ("faces", "edges", "curvedFaces", "curvedEdges")
+    if type(value) is not dict or set(value) != {*counts, "looseBox"}:
+        return False
+    if not all(type(value[key]) is int and value[key] >= 0 for key in counts):
+        return False
+    return value["curvedFaces"] <= value["faces"] and value["curvedEdges"] <= value["edges"] \
+        and value["looseBox"] is not None and _is_box(value["looseBox"])
 
 
 def bounds_key(algorithm: str, parts: tuple) -> str:
@@ -128,6 +147,12 @@ def cached_leaf_layout(codec: str, brep: str, measure: Callable[[], Any]) -> Any
     """A component's leaf layout, ``{"leaves": n, "placed": bool}``, remembered
     by the encoded BREP it describes (its codec and object hash)."""
     return _remember(LEAF_LAYOUT_ALGORITHM, (str(codec), str(brep)), measure, _is_leaf_layout)
+
+
+def cached_component_topology(codec: str, brep: str, measure: Callable[[], Any]) -> Any:
+    """A component's topology facts (``step_scene_mesh.prototype_topology``),
+    remembered by the encoded BREP they count (its codec and object hash)."""
+    return _remember(TOPOLOGY_ALGORITHM, (str(codec), str(brep)), measure, _is_topology)
 
 
 def clear() -> None:

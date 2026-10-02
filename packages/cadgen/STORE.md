@@ -97,8 +97,15 @@ own placement — which canonical publication records as it measures those
 leaves, and which tree composition (§3) reads to name the exact per-leaf box
 keys without decoding the shape. For an all-link result past the bounded
 capture it holds each link's bounds (§6): the merge of the leaf boxes the link
-places, keyed by the child tree it links and its exact placement. Nothing in
-the index holds a value
+places, keyed by the child tree it links and its exact placement. Keyed like
+the leaf layout, it holds each component's **topology** — its face and edge
+counts, how many of each are curved, and its loose box — the facts the
+adaptive edge policy classifies a scene's prototypes by
+(`step_scene_mesh.prototype_topology`). An all-link parent's build reads them
+by the BREP each pin names and decodes a pinned component only when its entry
+is missing or invalid, so its edge classes are the ones the decoded prototypes
+give; a scene of an authored compound (a parent with geometry of its own)
+still measures its prototypes. Nothing in the index holds a value
 computed while a model runs (README law 18): a model's own checks and
 operations always execute.
 
