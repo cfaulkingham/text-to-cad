@@ -136,11 +136,18 @@ Every publication lands in the ONE STEP scene the viewport adopted
 the same model, the live build reconciles its records in place, and the viewport
 is told the scene changed (`viewport.commitScene()`) rather than handed a new
 scene — so a progressive open or a detail swap never re-dresses every material or
-re-adopts anything. The scene is `complete: false` until the last component is
-in, which is what frames the model on its first publish and once more when it is
-whole. The camera sample that drives all of this is taken when the viewport says
-the camera settled (`onCameraSettled`: a move, a preview orbit, or a resize,
-which can expose a part without moving the camera) and when the selection changes.
+re-adopts anything. The camera frames the model once, on its first publish, on
+the box `assembly.json` declares for the whole of it (`bbox`, carried as the
+composition's `declaredBounds`): the scene's `restBounds` is that box from the
+start, so the framing, the orbit pivot, the zoom ruler, Zoom to fit, preview's
+turntable and the ground's size are final before most components have arrived,
+and later publishes move none of them. A descriptor without a box leaves the
+scene `complete: false` until the last component is in: it is framed on what
+arrived first and once more when it is whole, unless the person has taken the
+camera by then. The camera sample that drives all of this is taken when the
+viewport says the camera settled (`onCameraSettled`: a move, a preview orbit, or
+a resize, which can expose a part without moving the camera) and when the
+selection changes.
 
 A static component publication can reuse the main adoption's completed reset
 only in that same React render. Later visual or clipping changes still run

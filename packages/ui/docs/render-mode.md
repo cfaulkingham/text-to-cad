@@ -173,10 +173,13 @@ External STEP pose and animation passes publish current placed bounds before
 drawing. Depth and lighting follow moving parts without changing camera framing
 or the floor's footprint.
 
-All presets share surface-under-cursor zoom, zero-pose framing and the 1.1 fit
-padding multiplier. Preset changes do not refit. Motion changes geometry, not
-what 100% means. A changed camera clears current screen-space drawings; camera
-state republished unchanged after a runtime replacement does not.
+All presets share surface-under-cursor zoom, zero-pose framing and the fit
+padding: 1.1 across, and 1.1 down on a square or narrower viewport, easing to
+1.25 at 16:9 and wider (`interactiveFitPadding`), so a wide view leaves room
+above and below the model. Preset changes do not refit, and neither does a
+rebuild of the open file. Motion changes geometry, not what 100% means. A
+changed camera clears current screen-space drawings; camera state republished
+unchanged after a runtime replacement does not.
 
 ## Where the controls live
 

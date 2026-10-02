@@ -85,6 +85,9 @@ function createTriangleScene() {
   const bounds = { min: [0, 0, 0], max: [20, 20, 0] };
   return {
     object3D: root, bounds, restBounds: bounds,
+    // It opens ARRIVING, with no box declared for the whole of it: the viewport frames what is
+    // there, and frames it once more when `arrive(true)` says the box can grow no more.
+    complete: false,
     // This scene's one surface never takes a shadow, whatever the view says: it is TOLD the
     // setting and keeps its own rule, so the viewport must not set its meshes itself.
     setShadowReception(receives) { this.onShadowReception?.(`${receives}:${root.children[0].receiveShadow}`); },

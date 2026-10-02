@@ -975,8 +975,12 @@ test('Measure reads a distance between two picks', async () => {
 
 // A STEP is published in PIECES, and each piece lands in a scene the viewport already
 // holds: same object, same identity, more in it. The only thing that tells the viewport
-// so is `viewport.commitScene()` from the scene sync, and everything the viewport sizes
-// from the model — the ground, the depth range and the framing — is re-read THEN.
+// so is `viewport.commitScene()` from the scene sync, and what the viewport sizes from what
+// is PLACED — the depth range and the floor's height — is re-read THEN. What it sizes from
+// the model's REST box — the framing, the zoom ruler and the grid — was final at the first
+// publish: the descriptor declares the whole model's box (`bbox`), so the camera does not
+// move while the rest of the model arrives (the owner's report: "the model position jumps
+// around a bit as it is rendering").
 //
 // The committed two-component fixture cannot show this, and neither can any package
 // whose second publish is its LAST: the end of a load changes what the viewport is
@@ -984,7 +988,7 @@ test('Measure reads a distance between two picks', async () => {
 // costs nothing. `stageProgressiveFixture` serves the same two shapes as twenty-five
 // components, held one batch at a time, so the MIDDLE publish is an in-place change
 // with nothing else moving — and it is the one that brings the base.
-test('a package that arrives in pieces re-sizes its ground, its depth range and its framing on a publish in the middle of the load', async (t) => {
+test('a package that arrives in pieces is framed once, on the box it declares; a publish in the middle of the load re-fits only its depth range and floor', async (t) => {
   const staged = [];
   const staggered = await serveStepHarness({ after: cleanup => staged.push(cleanup) }, { progressive: true });
   t.after(async () => { for (const cleanup of staged.reverse()) await cleanup(); });
@@ -993,15 +997,24 @@ test('a package that arrives in pieces re-sizes its ground, its depth range and 
   const read = async () => ({ stage: await page.evaluate(() => window.__cadStage()), camera: await page.evaluate(() => window.__cadCamera()) });
   const span = bounds => [0, 1, 2].map(axis => Math.round(bounds.max[axis] - bounds.min[axis]));
   const publishes = () => page.evaluate(() => [window.__cadMeshCost.publishCount, window.__cadMeshCost.loadedComponents, window.__cadMeshCost.final]);
+  // The view a publish must not move: where the camera stands and looks, its zoom and frustum, and the grid.
+  const sameView = (from, to, what) => {
+    for (const key of ['position', 'target', 'up']) from.camera[key].forEach((value, index) => assert.ok(Math.abs(value - to.camera[key][index]) < 1e-6,
+      `${what}: camera ${key}[${index}] held (${value} -> ${to.camera[key][index]})`));
+    assert.deepEqual([to.camera.zoom, to.camera.halfHeight, to.stage.gridRadius], [from.camera.zoom, from.camera.halfHeight, from.stage.gridRadius],
+      `${what}: the zoom, the frustum and the grid held`);
+  };
 
-  // BATCH ONE: eight arms, all at the origin, so this box is one arm's whichever eight
-  // of them got there first. The rest of the package is still downloading.
+  // BATCH ONE: eight arms, all at the origin, so what is placed is one arm's box whichever
+  // eight of them got there first. The rest of the package is still downloading.
   await page.waitForFunction(() => window.__cadMeshCost?.loadedComponents === 8, null, { timeout: 60000 });
   await page.waitForFunction(() => window.__cadStage?.()?.bounds);
+  await restingCamera(page);
   const first = await read();
   const firstFrame = await frame(pane);
   assert.deepEqual(await publishes(), [1, 8, false], 'one publish, and the load is not over');
-  assert.deepEqual(span(first.stage.bounds), [10, 8, 8], 'the arm, and nothing else');
+  assert.deepEqual(span(first.stage.bounds), [10, 8, 8], 'the arm, and nothing else, is placed');
+  assert.deepEqual(span(first.camera.originalBounds), [20, 20, 10], "but the camera is framed on the whole model's declared box");
 
   // BATCH TWO, in the MIDDLE of the load: sixteen more components, one of them the base.
   // Nothing else about the viewport changed — same scene, same loading state, same camera
@@ -1013,44 +1026,30 @@ test('a package that arrives in pieces re-sizes its ground, its depth range and 
   const middleFrame = await frame(pane);
   assert.deepEqual(await publishes(), [2, 24, false], 'a second publish, and STILL not the end of the load');
   assert.deepEqual(span(middle.stage.bounds), [20, 20, 10], 'the base is in the box the stage is fitted to');
-  assert.ok(middle.stage.gridRadius > first.stage.gridRadius * 1.3,
-    `the grid grew with the model (${first.stage.gridRadius} -> ${middle.stage.gridRadius})`);
   assert.ok(middle.stage.floorZ < first.stage.floorZ,
-    `and the floor dropped to the model's new underside (${first.stage.floorZ} -> ${middle.stage.floorZ})`);
+    `the floor dropped to the model's new underside (${first.stage.floorZ} -> ${middle.stage.floorZ})`);
   assert.ok(middle.camera.far > first.camera.far,
     `the depth range was fitted again (far ${first.camera.far} -> ${middle.camera.far})`);
-  // The FRAMING does not follow it, and must not: a model that jumped in the frame every
-  // time a batch landed would be unusable while a large assembly loads. It is framed on
-  // what arrived first, and once more when the scene is whole.
-  assert.equal(middle.camera.halfHeight, first.camera.halfHeight, 'the camera held its frame while the model grew');
-  // On the DRAWN frame: the base's own authored blue fills a frame it was barely in, and
-  // the arm is drawn SMALLER than it was, because the camera pulled back.
+  sameView(first, middle, 'the second publish');
+  // On the DRAWN frame: the base's own authored blue fills a frame it was not in.
   const before = partBoxes(firstFrame), after = partBoxes(middleFrame);
-  const width = box => (box ? box.x1 - box.x0 : 0);
   assert.ok(after.base.count > (before.base?.count || 0) * 5,
     `the base is drawn (${before.base?.count || 0} -> ${after.base.count} pixels of its colour)`);
-  assert.ok(width(after.arm) < width(before.arm) * 0.8,
-    `and the arm shrank as the camera pulled back (${width(before.arm)}px -> ${width(after.arm)}px)`);
   assert.ok(differing(firstFrame, middleFrame) > 10_000, 'the picture changed');
 
-  // THE LAST COMPONENT is one more arm on top of the others, so it places nothing new —
-  // but it makes the scene WHOLE, and that is when the camera frames it again, on the box
-  // the middle publish had already given the stage.
+  // THE LAST COMPONENT is one more arm on top of the others: the scene is whole, and the
+  // camera that framed it whole from the start has nothing to do.
   staggered.release('b');
   await page.waitForFunction(() => window.__cadMeshCost?.final === true, null, { timeout: 60000 });
-  await page.waitForFunction(height => window.__cadCamera().halfHeight > height, first.camera.halfHeight);
+  await page.waitForFunction(() => window.cadHarness.a.controller?.readState().loading === false, null, { timeout: 60000 });
+  await restingCamera(page);
   const whole = await read();
   assert.deepEqual(span(whole.stage.bounds), span(middle.stage.bounds), 'the box it was already fitted to');
-  assert.ok(whole.camera.halfHeight > middle.camera.halfHeight * 1.3,
-    `framed once more, now on the whole model (${middle.camera.halfHeight} -> ${whole.camera.halfHeight})`);
-  const framed = partBoxes(await frame(pane));
-  // (The middle frame's base already fills nearly all of the band this is counted in, so the
-  // shrink it can show here is less than the camera's 1.3× pull-back would suggest.)
-  assert.ok(framed.base && framed.base.count < after.base.count * 0.9,
-    `and it is drawn smaller for it: the base ran off the frame it now sits inside (${after.base.count} -> ${framed.base.count} pixels)`);
+  sameView(first, whole, 'the last publish');
 
-  // Reopening restores the camera the person set: the completion fit exists for a camera
-  // nobody set, and a stored one is the person's.
+  // A descriptor that declares no box is framed on its first batch and once more when it is
+  // whole, but that second framing is for a camera NOBODY set: the camera the person set, kept
+  // with the tab, is restored through every publish and the completion.
   await page.evaluate(() => window.cadHarness.a.controller.setCamera({
     ...window.cadHarness.a.controller.readState().camera, position: [90, -30, 38], target: [4, 1, 0], zoom: 1.6 }));
   await restingCamera(page);
@@ -1060,11 +1059,11 @@ test('a package that arrives in pieces re-sizes its ground, its depth range and 
     'the camera the person set is somewhere the fit never puts it');
   const stored = await page.evaluate(() => JSON.parse(JSON.stringify(window.cadHarness.tabStore.getSnapshot())));
 
-  // Reopened: a fresh page over the same package, held in pieces again, carrying what the last
-  // session left for this file. (A remount would not do: the client still holds every component
-  // it downloaded, so the package would arrive whole in ONE publish and never reach completion
-  // as a second framing at all.)
-  staggered.hold('a'); staggered.hold('b');
+  // Reopened: a fresh page over the same package with no declared box, held in pieces again,
+  // carrying what the last session left for this file. (A remount would not do: the client still
+  // holds every component it downloaded, so the package would arrive whole in ONE publish and
+  // never reach completion as a second framing at all.)
+  staggered.hold('a'); staggered.hold('b'); staggered.declare(false);
   const reopened = await staggered.open({ timeout: 60000, record: stored });
   await reopened.pane.locator('[aria-busy] > div > canvas').first().waitFor();
   await reopened.page.waitForFunction(() => window.__cadMeshCost?.loadedComponents === 8, null, { timeout: 60000 });

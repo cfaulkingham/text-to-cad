@@ -641,8 +641,8 @@ export function useViewerRuntime({
 
       const handleControlsStart = () => {
         // Any drag on the controls — orbit, pan or zoom — means the view is the
-        // user's now. A progressive load re-frames the camera when the model
-        // finishes arriving, and must not do that over someone's shoulder.
+        // user's now. A progressive load with no declared box re-frames the camera
+        // when the model finishes arriving, and must not do that over someone's shoulder.
         if (runtimeRef.current) {
           runtimeRef.current.userMovedCamera = true;
         }
@@ -735,6 +735,10 @@ export function useViewerRuntime({
         keyboardOrbitState.pressedKeys.add(command.keyId);
         keyboardOrbitState.directionCounts[command.direction] += 1;
         keyboardOrbitState.lastFrameTime = 0;
+        // Orbiting by the keys makes the view the user's, as a drag does.
+        if (runtimeRef.current) {
+          runtimeRef.current.userMovedCamera = true;
+        }
         cancelCameraTransition(runtimeRef.current);
         beginInteraction();
         applyOrbitDelta(

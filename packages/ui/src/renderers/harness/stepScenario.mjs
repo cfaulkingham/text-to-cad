@@ -112,7 +112,12 @@ export function stageProgressiveFixture(fixture) {
     ...inputs.slice(8, 24).map(input => [input, 'a']),
     ...inputs.slice(24).map(input => [input, 'b'])
   ]);
-  return { ...fixture, view, surfaces, heldInputs, assembly: Buffer.from(JSON.stringify(view)) };
+  // The same package with no `bbox`, as a descriptor that declares none is served: the viewer
+  // frames its first batch and again once it is whole (`declare(false)` serves this one).
+  const undeclared = { ...view };
+  delete undeclared.bbox;
+  return { ...fixture, view, surfaces, heldInputs, assembly: Buffer.from(JSON.stringify(view)),
+    undeclaredAssembly: Buffer.from(JSON.stringify(undeclared)) };
 }
 
 /**
@@ -212,7 +217,8 @@ function harnessBundle() {
  *   progressive?: boolean }} [options]  `progressive` serves the twenty-five-component
  *   staging (`stageProgressiveFixture`) and HOLDS each batch after the first until
  *   `release(gate)` is called, so the package's three publishes are a test's to place
- *   rather than a race. `singlePart` serves the base alone as a cadgen single-part STEP
+ *   rather than a race; `declare(false)` then serves its descriptor without the `bbox` it
+ *   declares. `singlePart` serves the base alone as a cadgen single-part STEP
  *   (`stageSinglePartFixture`), its part named by an XCAF label entry.
  */
 export async function serveStepHarness(t, { onRequest, progressive = false, singlePart = false } = {}) {
@@ -228,6 +234,7 @@ export async function serveStepHarness(t, { onRequest, progressive = false, sing
   const opened = {}, gates = {};
   const hold = name => { gates[name] = new Promise(resolve => { opened[name] = resolve; }); };
   for (const name of ['a', 'b']) hold(name);
+  let declaring = true;
   let server, browser;
   const pages = new Set();
   t.after(async () => {
@@ -288,7 +295,9 @@ export async function serveStepHarness(t, { onRequest, progressive = false, sing
       }
       if (url.searchParams.get('file')?.endsWith('/assembly.json')) {
         const shown = views.get(url.searchParams.get('file').split('/')[0]) || fixture;
-        response.setHeader('Content-Type', 'application/json'); response.end(shown.assembly); return;
+        response.setHeader('Content-Type', 'application/json');
+        response.end(declaring || !shown.undeclaredAssembly ? shown.assembly : shown.undeclaredAssembly);
+        return;
       }
       notFound(response); return;
     }
@@ -362,5 +371,6 @@ export async function serveStepHarness(t, { onRequest, progressive = false, sing
     current = fixture;
     listed = entry;
   };
-  return { open, closePages, requests, fixture, entry, revise, port: () => server.address().port, release: gate => opened[gate]?.(), hold };
+  return { open, closePages, requests, fixture, entry, revise, port: () => server.address().port, release: gate => opened[gate]?.(), hold,
+    declare: on => { declaring = on !== false; } };
 }

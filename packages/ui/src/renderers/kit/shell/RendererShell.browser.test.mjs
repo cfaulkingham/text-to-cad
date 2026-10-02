@@ -379,6 +379,46 @@ test('a scene that arrives in place is framed when whole', async (t) => {
   assert.deepEqual(errors, []);
 });
 
+// That second framing is for a camera NOBODY set. A view the person turned with the arrow keys
+// while the scene was still arriving is theirs, as a dragged one is, and the whole scene keeps it.
+test('a view turned with the arrow keys while a scene arrives is kept when it is whole', async (t) => {
+  const origin = await serve(t);
+  const { page, errors } = await newPage(t);
+  await page.addInitScript(() => { window.Worker = undefined; });
+  await page.goto(`${origin}/?file=one.harness`);
+  const pane = page.getByTestId('one');
+  const canvas = pane.locator('[aria-busy="false"] > div > canvas').first();
+  await canvas.waitFor();
+  const pose = () => page.evaluate(() => { const c = window.__cadCamera(); return [...c.position, ...c.target, c.zoom]; });
+  // The camera at rest: the same over several frames running.
+  const atRest = () => page.waitForFunction(() => new Promise(resolve => {
+    let still = 0, last = null;
+    const step = () => {
+      const c = window.__cadCamera();
+      const now = JSON.stringify([c.position, c.target, c.zoom]);
+      still = now === last ? still + 1 : 0;
+      last = now;
+      if (still >= 5) resolve(true); else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }));
+  await atRest();
+  const opened = await pose();
+  // Over the viewer, with nothing focused: its arrow keys orbit it. No press, which would be a drag.
+  const box = await canvas.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.keyboard.press('ArrowLeft');
+  await atRest();
+  const turned = await pose();
+  assert.ok(turned.some((value, index) => Math.abs(value - opened[index]) > 1e-3), 'the arrow key turned the view');
+  await pane.locator('[data-harness-arrive="whole"]').click();
+  await page.waitForFunction(() => window.__cadCamera().originalBounds?.max?.[0] === 80);
+  await atRest();
+  (await pose()).forEach((value, index) => assert.ok(Math.abs(value - turned[index]) < 1e-6,
+    `the whole scene kept the turned view (${index}: ${turned[index]} → ${value})`));
+  assert.deepEqual(errors, []);
+});
+
 test('a renderer says more about its load than a download: finding the file, edit states, a failed update the model survives, the revision on screen, its own snapshot and its own frame', async (t) => {
   const origin = await serve(t);
   const { page, errors } = await newPage(t);

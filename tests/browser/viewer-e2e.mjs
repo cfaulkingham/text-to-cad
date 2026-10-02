@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Real-browser coverage for the bundled Viewer: every load path opens through the
-// real backend and bundle, and the camera holds across modes and re-fits a saved
+// real backend and bundle, and the camera holds across modes and across a saved
 // revision. CI runs all of it; there is no local-only set. Fixture and process
 // lifecycle belong to scripts/test/test-viewer-browser.sh.
 
@@ -330,8 +330,8 @@ async function selectViewingMode(page, current, next) {
 
 // --- camera grounding -----------------------------------------------------
 // The camera is fitted ONCE per model, to its zero pose: a mode round trip does
-// not move it, the explicit Reset view re-fits to that same zero pose, and only a
-// saved REVISION (a new zero pose) re-fits it. The tolerance is only there for
+// not move it, a saved REVISION (a new zero pose) does not move it either, and the
+// explicit Reset view re-fits to the zero pose there is now. The tolerance is only there for
 // the last-bit drift OrbitControls' own update leaves behind (observed at ~1e-15
 // relative); the regression this catches moved the framing by 2.4% and the pivot
 // by a quarter of the model.
@@ -558,15 +558,16 @@ async function modeCameraGate() {
     await context.close();
   }
 
-  // A mode switch or a pose must not re-frame; a REVISION must. Saving a rebuilt
-  // model over the open one gives it a new zero pose, and a camera still fitted to
-  // the old one leaves the new geometry clipped outside the frame. The grown arm
-  // reaches x = 158 where the first revision stopped at 58, so the old frame cannot
-  // contain it. A fresh tab, because the re-fit is for a camera nobody chose: one
-  // the tab kept for this file (Zoom to fit saves one) is restored instead.
+  // A mode switch, a pose or a REVISION must not re-frame. Saving a rebuilt model over
+  // the open one keeps the camera exactly, its pose and its zoom, even though the grown
+  // arm now reaches x = 158 where the first revision stopped at 58: the owner's call is
+  // that keeping the perspective and zoom level makes sense in every case. Only Zoom to
+  // fit frames the new zero pose, at 100% of its ruler. A fresh tab, so the camera held
+  // is the open-time fit and not one the tab kept for this file.
   const revision = await newPage();
   try {
     await openFile(revision.page, "hinge.step");
+    await settledCameraFrame(revision.page, { stage: "hinge before its revision" });
     const firstFit = await cameraState(revision.page);
     fs.copyFileSync(path.join(root, ".revision", "hinge.step"), path.join(root, "hinge.step"));
     const grown = await revision.page.waitForFunction(() => {
@@ -576,20 +577,27 @@ async function modeCameraGate() {
     if (!grown) {
       failures.push("step revision: the viewer never picked up the rebuilt model");
     } else {
-      // Settle: the fit lands in the same effect that adopts the new geometry.
-      await revision.page.waitForTimeout(1_500);
+      // The revision is adopted in the commit that published its bounds; the view then settles.
+      await settledCameraFrame(revision.page, { stage: "hinge revision" });
+      // The zoom ruler is measured against the zero pose, which the revision changed: the pose
+      // is compared without it.
       const revised = await cameraState(revision.page);
-      if (cameraDrift(revised, firstFit) <= CAMERA_EPSILON) {
-        failures.push(`step revision: the camera kept the previous revision's frame — ${describeCamera(revised)}`);
-      } else if (!(Number(revised?.halfHeight) > Number(firstFit?.halfHeight))) {
-        failures.push(`step revision: the model grew but the frame did not — ${describeCamera(revised)}, `
+      const drift = cameraDrift(revised && { ...revised, zoomPercent: firstFit?.zoomPercent }, firstFit);
+      if (!(drift <= CAMERA_EPSILON)) {
+        failures.push(`step revision: the camera moved (${drift.toExponential(2)} relative) — ${describeCamera(revised)}, `
           + `was ${describeCamera(firstFit)}`);
-      } else if (Math.abs(Number(revised?.zoomPercent) - 100) > 0.5) {
-        failures.push(`step revision: the new fit does not read as 100% (${revised?.zoomPercent})`);
+      }
+      await resetView(revision.page);
+      const refit = await cameraState(revision.page);
+      if (!(Number(refit?.halfHeight) > Number(firstFit?.halfHeight))) {
+        failures.push(`step revision: Zoom to fit did not frame the grown model — ${describeCamera(refit)}, `
+          + `was ${describeCamera(firstFit)}`);
+      } else if (Math.abs(Number(refit?.zoomPercent) - 100) > 0.5) {
+        failures.push(`step revision: Zoom to fit does not read as 100% (${refit?.zoomPercent})`);
       }
     }
     if (revision.errors.length) failures.push(`step revision: ${revision.errors.join(" | ")}`);
-    console.log("  step revision: a saved revision re-fits a camera nobody moved to its own zero pose");
+    console.log("  step revision: a saved revision keeps the camera, and Zoom to fit frames its own zero pose");
   } finally {
     await revision.context.close();
   }

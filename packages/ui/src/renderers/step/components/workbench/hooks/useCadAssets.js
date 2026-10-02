@@ -1069,8 +1069,10 @@ export function useCadAssets({
             if (!publishedOnce) {
               // First publish replaces whatever was showing (requestId is the
               // guard, as the single publish had). The camera frames once per
-              // model key on this state; the loader put the extreme-placed
-              // components in the first batch so that frame spans the model.
+              // model key on this state, on the box the descriptor declares
+              // (`declaredBounds`); without one it frames what arrived and
+              // again on the last publish. The loader put the extreme-placed
+              // components in the first batch, so what is drawn spans the model.
               publishedOnce = true;
               setMeshState(nextState);
               setStatus(ASSET_STATUS.READY);
