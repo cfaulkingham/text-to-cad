@@ -22,6 +22,9 @@ import { viewerDepthSettings, viewerLogarithmicDepthBuffer } from "./renderDepth
 import { createZoomPivotReanchor } from "../camera/zoomPivotReanchor.js";
 import { createFramePresentation } from "./framePresentation.js";
 
+// A pan moves what it grabs 1.35x as far as the cursor, in either projection (`handlePanPress`).
+const PAN_SPEED = 1.35;
+
 function createWebGlRenderer(THREE) {
   return createCadWebGlRenderer(THREE, {
     allowFallback: true,
@@ -235,7 +238,7 @@ export function useViewerRuntime({
       controls.enableDamping = true;
       controls.dampingFactor = DEFAULT_DAMPING_FACTOR;
       controls.rotateSpeed = 1;
-      controls.panSpeed = 1.35;
+      controls.panSpeed = PAN_SPEED;
       controls.zoomSpeed = getDefaultZoomSpeed();
       if ("zoomToCursor" in controls) {
         controls.zoomToCursor = true;
@@ -658,15 +661,24 @@ export function useViewerRuntime({
         : null;
       resizeObserver?.observe(container);
 
-      // Zoom-to-cursor leaves the orbit pivot (controls.target) drifting along the view ray
-      // at the new camera distance. Perspective pan and dolly both scale by the
-      // camera->pivot distance, so a drifted pivot makes panning and zooming feel slow when
-      // zoomed in and fast when zoomed out. After each wheel zoom, re-anchor the pivot depth
-      // onto the cursor hit in Inspect or stable model depth in Render, keeping
-      // it on the forward axis so the camera never re-orients or jumps the view.
+      // Perspective pan and dolly both scale by the camera->pivot distance (controls.target),
+      // where an orthographic pan or zoom moves everything on screen alike; so in Render a
+      // gesture over a surface nearer than the pivot ran faster than the same gesture in Solid.
+      // Each wheel step first re-anchors the pivot's depth onto the surface under the cursor
+      // (the model's centre on a miss), keeping it on the forward axis so the camera never
+      // re-orients or jumps the view, and is then a fraction of the distance to what the cursor
+      // is on. A pan scales its speed by that surface's depth instead (`handlePanPress`).
       const zoomReanchor = createZoomPivotReanchor(THREE);
       const zoomReanchorPointer = zoomReanchor.pointer;
-      let zoomPivotReanchorPending = false;
+      const setReanchorPointer = (event) => {
+        const rect = renderer.domElement.getBoundingClientRect();
+        if (!(rect.width > 0 && rect.height > 0)) return false;
+        zoomReanchorPointer.set(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        return true;
+      };
 
       const handleControlsStart = () => {
         // Any drag on the controls — orbit, pan or zoom — means the view is the
@@ -679,10 +691,6 @@ export function useViewerRuntime({
         beginInteraction();
       };
       const handleControlsChange = () => {
-        if (zoomPivotReanchorPending) {
-          zoomPivotReanchorPending = false;
-          zoomReanchor.apply(runtimeRef.current);
-        }
         emitPerspectiveChange(runtimeRef.current);
         requestRender();
       };
@@ -704,23 +712,36 @@ export function useViewerRuntime({
         controls.zoomSpeed = isPinchWheelEvent(event)
           ? getPinchZoomSpeed() / WHEEL_PINCH_DELTA_BOOST
           : (isTrackpadLikeWheelEvent(event) ? getPinchZoomSpeed() : ACCELERATED_WHEEL_ZOOM_SPEED);
-        // Capture the cursor (NDC) so the post-zoom pivot re-anchor can raycast under it.
-        const rect = renderer.domElement.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-          zoomReanchorPointer.set(
-            ((event.clientX - rect.left) / rect.width) * 2 - 1,
-            -((event.clientY - rect.top) / rect.height) * 2 + 1
-          );
-          zoomPivotReanchorPending = true;
+        // This listener captures, so it runs before OrbitControls takes the step.
+        if (controls.enabled && controls.enableZoom && setReanchorPointer(event)) {
+          zoomReanchor.apply(runtimeRef.current);
         }
         beginInteraction();
       };
       const wheelListenerOptions = { passive: true, capture: true };
+      // A press that starts a mouse pan sets its speed before OrbitControls reads it on the
+      // first move: the surface under the cursor then moves with it at PAN_SPEED, in either
+      // projection. A miss, a touch and every other press keep the one speed.
+      const panPress = (event) => {
+        if (event.pointerType === "touch" || !controls.enabled || !controls.enablePan) return false;
+        const { LEFT, MIDDLE, RIGHT } = controls.mouseButtons;
+        const action = [LEFT, MIDDLE, RIGHT][event.button];
+        const modified = event.ctrlKey || event.metaKey || event.shiftKey;
+        return action === THREE.MOUSE.PAN ? !modified : action === THREE.MOUSE.ROTATE && modified;
+      };
+      const handlePanPress = (event) => {
+        controls.panSpeed = PAN_SPEED;
+        if (panPress(event) && setReanchorPointer(event)) {
+          controls.panSpeed = PAN_SPEED * zoomReanchor.panScale(runtimeRef.current);
+        }
+      };
+      const panPressListenerOptions = { capture: true };
 
       controls.addEventListener("start", handleControlsStart);
       controls.addEventListener("change", handleControlsChange);
       controls.addEventListener("end", handleControlsEnd);
       renderer.domElement.addEventListener("wheel", handleWheel, wheelListenerOptions);
+      renderer.domElement.addEventListener("pointerdown", handlePanPress, panPressListenerOptions);
       renderer.domElement.addEventListener("webglcontextlost", handleContextLost, false);
       renderer.domElement.addEventListener("webglcontextrestored", handleContextRestored, false);
 
@@ -959,6 +980,7 @@ export function useViewerRuntime({
         runtime.controls.removeEventListener("change", handleControlsChange);
         runtime.controls.removeEventListener("end", handleControlsEnd);
         runtime.renderer.domElement.removeEventListener("wheel", handleWheel, wheelListenerOptions);
+        runtime.renderer.domElement.removeEventListener("pointerdown", handlePanPress, panPressListenerOptions);
         runtime.renderer.domElement.removeEventListener("webglcontextlost", handleContextLost, false);
         runtime.renderer.domElement.removeEventListener("webglcontextrestored", handleContextRestored, false);
         window.removeEventListener("keydown", handleKeyDown);
