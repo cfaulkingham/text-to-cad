@@ -45,5 +45,81 @@ class WorkerPrewarm(unittest.TestCase):
         self.assertGreater(frames[0]["ready"], 0)
 
 
+class WorkerScratchSweep(unittest.TestCase):
+    """A starting worker removes what killed processes left in the temp folder -- served
+    views, exported views, trace logs -- and never a live process's
+    (``cadgen._internal.temp_leftovers``)."""
+
+    def test_the_sweep_takes_dead_and_old_scratch_only(self):
+        import os
+        import tempfile
+        import time
+        from pathlib import Path
+
+        from cadgen._internal import temp_leftovers
+
+        exited = subprocess.Popen([sys.executable, "-c", "pass"])
+        exited.wait()
+        dead, live = exited.pid, os.getpid()
+        with tempfile.TemporaryDirectory(prefix="scratch-sweep-") as tmp:
+            root = Path(tmp)
+
+            def folder(name):
+                path = root / name
+                path.mkdir(parents=True)
+                (path / "assembly.json").write_text("{}")
+                return path
+
+            def file(name):
+                path = root / name
+                path.write_text("log")
+                return path
+
+            gone = [folder(f"cadgen-views/{dead}"), folder(f"cadgen-view-{dead}-ab12cd34"),
+                    file(f"cadgen-trace-{dead}-ab12cd34.log"),
+                    folder("cadgen-view-o1dname_"), file("cadgen-trace-o1dname_.log")]
+            kept = [folder(f"cadgen-views/{live}"), folder("cadgen-views/not-a-pid"),
+                    folder(f"cadgen-view-{live}-ef56gh78"), file(f"cadgen-trace-{live}-ef56gh78.log"),
+                    folder("cadgen-view-newname_"), file("cadgen-trace-newname_.log"),
+                    folder("cadgen-viewer-info"), file("cadgen-bind-x1y2"), folder("cadgen-test-store.ab12")]
+            old = time.time() - 2 * temp_leftovers.UNNAMED_AGE_SECONDS
+            for path in (root / "cadgen-view-o1dname_", root / "cadgen-trace-o1dname_.log"):
+                os.utime(path, (old, old))
+            removed = temp_leftovers.sweep(root)
+            self.assertEqual(sorted(removed), sorted(str(path) for path in gone))
+            self.assertEqual([path for path in gone if path.exists()], [])
+            self.assertEqual([path for path in kept if not path.exists()], [])
+
+    def test_scratch_is_named_after_its_process(self):
+        import os
+        from pathlib import Path
+
+        from cadgen._internal import filetrace
+
+        with filetrace.capture():
+            log = Path(filetrace._LOG).name
+        self.assertTrue(log.startswith(f"cadgen-trace-{os.getpid()}-"), log)
+
+    def test_a_starting_worker_sweeps_before_it_is_ready(self):
+        program = textwrap.dedent("""
+            from cadgen._internal import temp_leftovers
+            from cadgen.daemon import worker
+            swept = []
+            temp_leftovers.sweep_in_background = lambda: swept.append(True)
+            original_emit = worker._emit
+            def checked_emit(frame):
+                if "ready" in frame:
+                    assert swept == [True], "ready before the scratch sweep started"
+                original_emit(frame)
+            worker._emit = checked_emit
+            raise SystemExit(worker.serve())
+        """)
+        completed = subprocess.run(
+            [sys.executable, "-c", program], input="", text=True,
+            capture_output=True, timeout=90,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

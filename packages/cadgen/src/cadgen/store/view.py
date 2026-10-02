@@ -194,8 +194,12 @@ def component_object_for_tree(tree_hash: str, ref: str) -> tuple[str, str] | Non
 
 def views_root() -> Path:
     """Where this process's views live: under the system temp dir, per pid, so
-    a served view path is always confined to one known root."""
-    root = Path(tempfile.gettempdir()) / "cadgen-views" / str(os.getpid())
+    a served view path is always confined to one known root. A killed
+    process's are swept by the next worker that starts
+    (``cadgen._internal.temp_leftovers``)."""
+    from cadgen._internal.temp_leftovers import VIEWS_DIRNAME
+
+    root = Path(tempfile.gettempdir()) / VIEWS_DIRNAME / str(os.getpid())
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -253,7 +257,12 @@ def export_view(
         raise FileNotFoundError(f"tree object missing: {tree_hash}")
     if cids is not None and any(cid not in descriptor["components"] for cid in cids):
         raise ValueError("view request names an unpinned component")
-    root = Path(dest) if dest is not None else Path(tempfile.mkdtemp(prefix="cadgen-view-"))
+    if dest is None:
+        from cadgen._internal.temp_leftovers import VIEW_PREFIX, owned_prefix
+
+        # Named after this process, so a sweep can tell whether its owner is gone.
+        dest = Path(tempfile.mkdtemp(prefix=owned_prefix(VIEW_PREFIX)))
+    root = Path(dest)
     return _write_view(materialize_view_surfaces(descriptor, cids), root, cids)
 
 

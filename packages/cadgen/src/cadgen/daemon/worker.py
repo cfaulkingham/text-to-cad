@@ -327,6 +327,11 @@ def serve() -> int:
     from cadgen.daemon import executors
 
     executors.set_event_sink(lambda event: _emit({"event": event}))
+    # What killed workers left in the temp folder (views, trace logs) goes, on a
+    # thread of its own: no job waits for it, and no live process's is touched.
+    from cadgen._internal import temp_leftovers
+
+    temp_leftovers.sweep_in_background()
     _warm_imports()
     _emit({"ready": os.getpid()})
     for line in sys.stdin:
