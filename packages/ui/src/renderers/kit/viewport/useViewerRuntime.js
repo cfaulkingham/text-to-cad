@@ -101,6 +101,27 @@ export function useViewerRuntime({
     viewerMountedRef.current = true;
     return () => { viewerMountedRef.current = false; };
   }, []);
+  // OrbitControls listens for the Control key on its canvas's ROOT NODE (`getRootNode()`: the
+  // document, while the canvas is on the page) and removes that listener from whatever the root is
+  // when it disconnects. The passive teardown below runs after React has taken the viewport off the
+  // page, when the root is the detached subtree: the document kept the listener, and through it the
+  // controls, the canvas and its WebGL context, one more on every file switch. So the controls let
+  // go here, in a layout cleanup, which runs before React detaches anything; a viewport a Suspense
+  // boundary only hid takes them back when it is shown again.
+  useLayoutEffect(() => {
+    const runtime = runtimeRef.current;
+    if (runtime?.resetToken === runtimeResetToken && runtime.controlsReleased) {
+      runtime.controlsReleased = false;
+      runtime.controls.connect(runtime.renderer.domElement);
+      runtime.renderer.domElement.style.cursor = "";
+    }
+    return () => {
+      const current = runtimeRef.current;
+      if (!current || current.controlsReleased) return;
+      current.controlsReleased = true;
+      current.controls.disconnect();
+    };
+  }, [runtimeResetToken, runtimeRef]);
 
   useEffect(() => {
     if (runtimeRef.current) {
@@ -414,7 +435,11 @@ export function useViewerRuntime({
       };
 
       let rafId = 0;
+      // Set at teardown. Its context is lost then, so a frame something still asks of this
+      // runtime (a timer, a holder of its `requestRender`) draws nothing.
+      let released = false;
       const requestRender = () => {
+        if (released) return;
         if (interactionState.renderQueued) {
           const now = typeof performance !== "undefined" && typeof performance.now === "function"
             ? performance.now()
@@ -454,6 +479,7 @@ export function useViewerRuntime({
       // queued. For a caller that runs after layout and before paint (a
       // ResizeObserver), whose picture a frame scheduled for later would leave stale.
       const renderNow = () => {
+        if (released) return;
         if (interactionState.renderQueued) {
           window.cancelAnimationFrame(rafId);
         }
@@ -465,6 +491,7 @@ export function useViewerRuntime({
       };
 
       function renderFrame(timestamp) {
+        if (released) return;
         const frameStartedAt = perfStart();
         interactionState.renderQueued = false;
         interactionState.renderQueuedAt = 0;
@@ -798,6 +825,10 @@ export function useViewerRuntime({
         syncCameraViewport,
         renderer,
         softwareRendering,
+        // The epoch this runtime belongs to, and whether a layout cleanup took its controls off
+        // the page (the layout effect above).
+        resetToken: runtimeResetToken,
+        controlsReleased: false,
         Line2,
         LineGeometry,
         LineSegments2,
@@ -905,6 +936,7 @@ export function useViewerRuntime({
         if (!runtime) {
           return;
         }
+        released = true;
         if (runtime.activeModelKey && runtime.interactiveFraming) previousViewStateRef.current = {
           modelKey: runtime.activeModelKey,
           framing: Object.fromEntries([
@@ -933,6 +965,7 @@ export function useViewerRuntime({
         keyOwner.removeEventListener("pointerleave", handlePointerLeave);
         window.removeEventListener("blur", clearKeyboardOrbit);
         document.removeEventListener("visibilitychange", handleVisibilityChange);
+        // Usually released already, while the canvas was still on the page (the layout effect above).
         runtime.controls.dispose();
         // The scene in the viewport is its owner's: the owner releases it (and
         // whatever it hung on the runtime) and names what it released.
@@ -953,6 +986,12 @@ export function useViewerRuntime({
         if (container.contains(runtime.renderer.domElement)) {
           container.removeChild(runtime.renderer.domElement);
         }
+        // dispose() frees what the renderer tracks, not the context: three's shared textures (its
+        // module-level empty and lookup textures) keep a dispose listener of every renderer that drew
+        // them, so the context stays reachable, and alive with its GPU memory, for as long as the
+        // page. Losing it now frees that memory whatever still holds it. A handoff loses nothing in
+        // use: the next runtime draws in a context of its own, and `onRelease` above ran first.
+        if (!runtime.renderer.getContext().isContextLost()) runtime.renderer.forceContextLoss();
         runtimeRef.current = null;
       };
     }

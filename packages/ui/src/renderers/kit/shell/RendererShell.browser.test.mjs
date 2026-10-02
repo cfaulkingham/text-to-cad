@@ -208,6 +208,103 @@ test('a shell renderer restores isolated view state on a remount', async (t) => 
   assert.deepEqual(errors, []);
 });
 
+test('a viewport that goes loses its WebGL context and leaves no listener on the page, and a context recovery hands over to a fresh one', async (t) => {
+  const origin = await serve(t, (url, root, response) => {
+    if (url.pathname.endsWith('/__cad/catalog')) {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ rootId: root, entries: [{ kind: 'stl', file: 'part.stl', rootRelativeFile: 'part.stl', url: '/mesh.stl', hash: root, bytes: mesh.length }] }));
+      return true;
+    }
+    if (url.pathname.endsWith('/mesh.stl')) { response.end(mesh); return true; }
+    return false;
+  });
+  const { page, errors } = await newPage(t);
+  await page.addInitScript(() => {
+    window.Worker = undefined;
+    // Every WebGL context the page makes, held weakly, and the keydown listeners on the window and
+    // the document, counted as the DOM keeps them (one per listener and capture flag).
+    const contexts = [];
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
+      const context = getContext.call(this, type, ...rest);
+      if (context && /webgl/.test(type) && !contexts.some(ref => ref.deref() === context)) contexts.push(new WeakRef(context));
+      return context;
+    };
+    // Oldest first: lost, or collected (true); live (false).
+    window.cadContextsLost = () => contexts.map(ref => ref.deref()?.isContextLost() ?? true);
+    const keydown = new Set(), ids = new WeakMap();
+    let next = 0;
+    const key = (target, listener, options) => {
+      if (!ids.has(listener)) ids.set(listener, next += 1);
+      return `${target === window ? 'window' : 'document'}:${ids.get(listener)}:${typeof options === 'boolean' ? options : options?.capture === true}`;
+    };
+    const { addEventListener, removeEventListener } = EventTarget.prototype;
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      if (type === 'keydown' && listener && (this === window || this === document)) keydown.add(key(this, listener, options));
+      return addEventListener.call(this, type, listener, options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+      if (type === 'keydown' && listener && (this === window || this === document)) keydown.delete(key(this, listener, options));
+      return removeEventListener.call(this, type, listener, options);
+    };
+    window.cadKeydownListeners = () => keydown.size;
+  });
+  await page.goto(`${origin}/`);
+  const shown = () => page.waitForFunction(() => window.cadHarness?.a?.controller?.readState().loading === false
+    && !!document.querySelector('[data-testid="one"] [aria-busy="false"] canvas'));
+  const gone = () => page.waitForFunction(() => !document.querySelector('[data-testid="one"] canvas'));
+  // A teardown finishes after React has taken the view off the page, so the expected contexts are
+  // awaited before the state is read.
+  const state = async (expected) => {
+    await page.waitForFunction(lost => JSON.stringify(window.cadContextsLost()) === JSON.stringify(lost), expected).catch(() => {});
+    return page.evaluate(() => ({ contexts: window.cadContextsLost(), keydown: window.cadKeydownListeners() }));
+  };
+  await shown();
+  const keydown = await page.evaluate(() => window.cadKeydownListeners());
+  assert.deepEqual(await state([false]), { contexts: [false], keydown });
+
+  // A file switch, or a library card pictured: the view goes and another comes. Every one that went
+  // has lost its context, the GPU memory with it, and the page keeps no listener of its controls.
+  for (let remount = 1; remount <= 3; remount += 1) {
+    await page.evaluate(() => window.cadHarness.mounted(false));
+    await gone();
+    await page.evaluate(() => window.cadHarness.mounted(true));
+    await shown();
+    const contexts = [...Array(remount).fill(true), false];
+    assert.deepEqual(await state(contexts), { contexts, keydown },
+      `after remount ${remount}: the views that went have lost their contexts, and the page holds one view's listeners`);
+  }
+
+  // A context RECOVERY replaces the runtime under a view that stays: the next one draws in a
+  // context of its own, and the one it replaced goes as any other does, its listeners with it.
+  const recovered = page.evaluate(() => new Promise(resolve => {
+    const canvas = document.querySelector('[data-testid="one"] [aria-busy="false"] canvas');
+    const extension = canvas.getContext('webgl2').getExtension('WEBGL_lose_context');
+    canvas.addEventListener('webglcontextlost', () => setTimeout(() => { extension.restoreContext(); resolve(); }), { once: true });
+    extension.loseContext();
+  }));
+  await recovered;
+  await page.waitForFunction(() => window.cadContextsLost().length === 5);
+  await shown();
+  assert.deepEqual(await state([true, true, true, true, false]), { contexts: [true, true, true, true, false], keydown },
+    'the recovered view draws in a fresh context, and the one it replaced is lost');
+  // And the fresh one is a viewer: the camera orbits under a drag.
+  const before = await page.evaluate(() => window.__cadCamera().position);
+  const box = await page.getByTestId('one').locator('[aria-busy="false"] > div > canvas').first().boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2 + 20, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForFunction(start => window.__cadCamera().position.some((value, index) => Math.abs(value - start[index]) > 1e-3), before);
+
+  // The last view goes: every context is lost, and no test seam keeps a runtime on the window.
+  await page.evaluate(() => window.cadHarness.mounted(false));
+  await gone();
+  assert.deepEqual((await state([true, true, true, true, true])).contexts, [true, true, true, true, true]);
+  assert.deepEqual(await page.evaluate(() => [typeof window.__cadCamera, typeof window.__cadStage]), ['undefined', 'undefined']);
+  assert.deepEqual(errors, []);
+});
+
 // A wide, flat box: the shape whose fit is decided by its WIDTH against the viewport's
 // aspect, so a fit taken under the wrong lens or the wrong canvas shows up immediately.
 // (A tall or cubic model is fitted by its height and hides the difference entirely.)
