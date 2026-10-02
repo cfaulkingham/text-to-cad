@@ -206,9 +206,10 @@ requests on a warm reopen without retaining another copy of the geometry.
 
 The host owns where state lives; the package owns what it is. Everything the
 viewer keeps is one tab record (`@text-to-cad/ui/tab-store`: the tab's settings and
-each file's view — its camera, Display settings and the renderer's own slices),
-thrown out with the tab and kept across a reload. The web keeps it in
-`sessionStorage`, the desktop in its per-tab store; both hand `createTabStore` one
+the view of the file on screen — its camera, Display settings and the renderer's own
+slices), thrown out with the tab and kept across a reload. Leaving a file drops its
+view (`CadViewer`), and an update of it keeps what still fits the new revision. The
+web keeps it in `sessionStorage`, the desktop in its per-tab store; both hand `createTabStore` one
 synchronous read/write adapter and take `FileViewer`'s state from it. The tool in
 hand, the selection and measurements are never stored. Capabilities determine menus: a read-only web source cannot
 acquire editing or native operations merely by rendering this component.
@@ -290,7 +291,8 @@ One per-file settings store serves controls, live commands and persistence.
 Presets use the canonical grouped schema; see [View presets](docs/render-mode.md).
 Expensive changes use [staged viewport updates](docs/view-updates.md): controls
 remain authoritative, preparation is replaceable, and captures await presentation.
-Camera transforms remain local to a mounted viewer; refresh/reopen fits the file.
+The camera is part of the file's view: a refresh restores the one the file on screen
+was left at, and opening a file — again after leaving it, too — fits it.
 
 Authored material color, finish and opacity are read-only in every style; the
 Model reference section shows their properties. There is no Materials editor or

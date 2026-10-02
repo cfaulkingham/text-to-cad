@@ -229,22 +229,31 @@ export function useRendererShell({
     });
   };
   const saveTimer = useRef(0);
+  // A view that has gone writes nothing more: its last write is the flush as it unmounts, and a host
+  // that drops the view of a file it left (`CadViewer`) must not see it written again by a camera
+  // report or a slice that lands after that.
+  const closed = useRef(false);
   const flushSession = useCallback(() => {
     window.clearTimeout(saveTimer.current);
     saveTimer.current = 0;
+    if (closed.current) return;
     const next = latestRecord.current();
     if (fileViewsEqual(recordRef.current, next)) return;
     recordRef.current = next;
     onStateChangeRef.current?.(next);
   }, []);
   const scheduleSessionSave = useCallback(() => {
+    if (closed.current) return;
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(flushSession, SESSION_SAVE_DELAY_MS);
+  }, [flushSession]);
+  useEffect(() => {
+    closed.current = false;
+    return () => { flushSession(); closed.current = true; };
   }, [flushSession]);
   // The display's and playback's every edit is saved soon after; the camera's on every move (below);
   // a renderer's slices when it says so. The tool in hand is not saved at all.
   useEffect(() => { scheduleSessionSave(); }, [displaySettings, playback, scheduleSessionSave]);
-  useEffect(() => () => flushSession(), [flushSession]);
 
   // Stable across renders: the viewport keeps it in a ref for the life of the runtime.
   const cameraSettledRef = useRef(onCameraSettled);

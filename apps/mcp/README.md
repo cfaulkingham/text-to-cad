@@ -137,8 +137,12 @@ Reveal through `cad_reveal`), the navbar's links (Feedback's and an alert's Repo
 new issue among them), followed through `ui/open-link`,
 and, on the sidebar, its library, with Open: the desktop's file chooser, where any file can be chosen.
 With no model there it is the home, and a model opened from it has the navbar's back
-arrow to it. `App.tsx` frames it (full page, or an inline card with its
-full-size button). In a tab, preview's playbar sits on the line of Codex's
+arrow to it. A view keeps its tab record in memory (`App.tsx`): the model on screen keeps
+its view — camera, Display settings, pose — through updates of it, and leaving it for
+another model, for the home or for another root drops it, as in the web Viewer. A view the
+host creates again (its frame re-created) starts afresh: nothing names a view across its
+frames, so there is nothing to keep its record under. `App.tsx` frames it (full page, or
+an inline card with its full-size button). In a tab, preview's playbar sits on the line of Codex's
 composer, which floats over the page (`--cad-viewport-bottom-center`), and the
 home's and the explorer's lists scroll clear of it (`--cad-host-bottom-inset`).
 

@@ -171,8 +171,9 @@ the build — detection only; it keeps serving.
   retains completed STEP working sets in a bounded CPU cache, so reopening a
   warm assembly does not reload each component. Root, origin and revision
   identities isolate reuse; changed files and evicted entries load normally.
-  Inactive WebGL scenes are released, and a file's camera lives only while its
-  viewer is mounted.
+  Inactive WebGL scenes are released, and a file's view (its camera, Display
+  settings and pose) lasts only while it is the file on screen: a refresh brings it
+  back, and leaving the file drops it.
 - **Vite's transform cache can outlive HMR and hard reloads.** If a source
   edit does not show up, restart the dev server and delete
   `node_modules/.vite`.
@@ -255,8 +256,9 @@ tool stack starts closed (Select, pressed, opens it). Preview is the shared shel
 actions: it keeps the navbar and the explorer, hides the toolbar, tool stack and
 Quick Edit, orbits by default, plays routines (on entry only with Autoplay on)
 and offers Playback and Display settings; the host passes no preview props.
-The camera is never stored, so a refresh frames the file anew; Display settings,
-pose and explode are kept per file through the shared state contract (see
+The file on screen keeps its view in the tab — its camera, Display settings
+(explode and clip included) and pose — so a refresh restores it; leaving the file for
+another, or for another root, drops it, and opening it again frames it anew (see
 [storage](docs/storage.md)).
 
 Authored material information lives in the selection's reference details; editing

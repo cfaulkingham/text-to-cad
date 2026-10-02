@@ -555,7 +555,7 @@ test('Select picks links at once; a selection lives only under Select; Links sho
   assert.deepEqual(robot.errors, []);
 });
 
-test('a pose and the open panel survive closing the file, and a pose is dropped when the description changed', async (t) => {
+test('a reload of the tab brings the pose back, and nothing of the tool or the Display popover, and a pose is dropped when the description changed', async (t) => {
   const robot = await open(t, 'arm.urdf');
   const { page, pane } = robot;
   await robot.openPosition();
@@ -564,7 +564,10 @@ test('a pose and the open panel survive closing the file, and a pose is dropped 
   await robot.type('lift', 0.2, 'm');
   // The last write lands in the record although it was never rendered: the record reads the pose when it is written.
   await robot.type('nod', 12);
-  // The file closes with its Display settings open: they are not a tool, and the tool is not saved either.
+  // The page goes with its Display settings open: they are not a tool, and the tool is not saved either.
+  // The harness's unmount and remount keep the tab's record, as a reload does (the web's pagehide
+  // unmounts the viewer, and its sessionStorage outlives the page). Leaving the file for another, or
+  // for the home, drops its view instead: `cad-viewer/CadViewerFileViews.test.tsx`.
   await robot.toggle('cad-display').click();
   await pane.page().locator('[data-display-popover]').waitFor();
   await page.evaluate(() => window.cadHarness.mounted(false));
@@ -575,10 +578,10 @@ test('a pose and the open panel survive closing the file, and a pose is dropped 
   assert.equal('tool' in record, false, 'the view keeps no tool');
   assert.match(record.renderer.pose.signature, /arm\.urdf-1$/);
   await page.evaluate(() => window.cadHarness.mounted(true));
-  // The tool is never saved: the file reopens in Select, Display shut.
+  // The tool is never saved: the reloaded file opens in Select, Display shut.
   await robot.linksPanel().waitFor();
   assert.deepEqual(await robot.toolNames(), ['Select:true', 'Position:false']);
-  assert.equal(await pane.page().locator('[data-display-popover]').count(), 0, 'it reopens with Display shut');
+  assert.equal(await pane.page().locator('[data-display-popover]').count(), 0, 'it comes back with Display shut');
   assert.deepEqual(await robot.panels(), ['Show files:false']);
   await robot.openPosition();
   await robot.jointField('shoulder').waitFor();

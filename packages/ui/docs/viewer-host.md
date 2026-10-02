@@ -40,7 +40,7 @@ are for reading and maintaining the contracts.
 | `CadWorkspaceService`, `CadResourceProvider`, worker tickets | [CAD service types](../../core/src/client/types.ts) | `@text-to-cad/core/client` |
 | `createHttpAttachmentStore` (the viewer server's `AttachmentStore`: it saves a PNG through `POST /__cad/sketches`) | [Attachment store](../../core/src/client/attachments.js) | `@text-to-cad/core/client` |
 | `StepRendererOptions`, `CadLiveBinding` | [STEP registration](../src/renderers/step/index.ts) | `@text-to-cad/ui/renderers/step` |
-| `TabStore`, `TabRecordStorage`, `createTabStore`, `useTabViewerState` (the tab's one store: its settings, its file views, and `FileViewer`'s state from both) | [Tab store](../src/tab-store/tabStore.ts), [the record](../src/tab-store/tabRecord.ts) | `@text-to-cad/ui/tab-store` |
+| `TabStore`, `TabRecordStorage`, `createTabStore`, `useTabViewerState` (the tab's one store: its settings, the view of the file on screen, and `FileViewer`'s state from both) | [Tab store](../src/tab-store/tabStore.ts), [the record](../src/tab-store/tabRecord.ts) | `@text-to-cad/ui/tab-store` |
 | `CadPreferenceSource`, `createCadPreferences` (the tab's settings as renderers read them) | [Viewer preferences](../src/renderers/workspace/preferences.ts) | `@text-to-cad/ui/renderers/workspace` |
 | `DxfRendererOptions` (2D drawings; declares no panel, and declines every camera, display and selection command) | [DXF registration](../src/renderers/dxf/index.ts) | `@text-to-cad/ui/renderers/dxf` |
 | `GlbRendererOptions`, `LiveViewBinding`, `LiveViewController` | [GLB registration](../src/renderers/glb/index.ts), [live binding](../src/renderers/kit/shell/liveBinding.ts) | `@text-to-cad/ui/renderers/glb` |
@@ -305,9 +305,15 @@ lives through one adapter, `TabRecordStorage` — a synchronous read and write o
 whole record: the web over `sessionStorage`, the desktop over its per-tab store — and
 the package owns the record's shape, version and normalization. `settings` is
 tab-wide (the file tree's width and expansion, the tool stack's layout, the
-appearance) and is what every renderer reads as its preferences;
-`files` holds each opened file's view under `[root, path, renderer]`, the fifty most
-recently written. A view is `{ camera, display, playback, renderer }` (`kit/shell/fileView.js`):
+appearance, the home's layout) and is what every renderer reads as its preferences;
+`files` holds the view of the file on screen, under `[root, path, renderer]`, and no
+other: a write keeps the newest alone (`TAB_FILE_LIMIT`), and `CadViewer` drops the view
+of a file it leaves — for another file, for the home, or for another root — once the
+departing renderer's last write has landed (`files.retain`). A reload of the tab shows
+the same file, so it brings that view back; a file opened again after leaving it starts
+at the defaults. In the CAD app the record is in memory, one per view: a view the host
+creates again (its frame re-created) starts afresh, since nothing names a view across its
+frames. A view is `{ camera, display, playback, renderer }` (`kit/shell/fileView.js`):
 the camera is restored in place of the open-time fit, the display settings with their
 Clip and Explode, preview's Playback settings (orbit on or off and its speed, Autoplay,
 the routine's chosen speed and loop), and the renderer's own slices each behind the
@@ -320,9 +326,10 @@ another view's entries. Material appearance is source-owned and read-only. Live
 selection and scene ownership belong to the mounted view.
 
 A mounted view writes its view shortly after each change (the camera on every move,
-debounced) and once more when it unmounts; the store writes through synchronously, so
-what the tab last saw is what a reload restores. Nothing saves document content or
-promises an asynchronous operation will finish during page exit. Web owns pagehide
+debounced) and once more when it unmounts, and nothing after that; the store writes
+through synchronously, so what the tab last saw is what a reload restores. Nothing
+saves document content or promises an asynchronous operation will finish during page
+exit. Web owns pagehide
 (which unmounts the app), focus, visibility, history and development reload. Desktop
 owns window/runtime lifecycle and IPC.
 

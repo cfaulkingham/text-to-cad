@@ -78,7 +78,9 @@ export function FileViewer({ file, host, renderers, state, onStateChange, displa
   const changeWidth = useCallback((nextWidth: number) => changeState((previous) => ({ ...previous, panelWidth: clampPanelWidth(nextWidth) })), [changeState]);
   const rendererStateKey = loaded.status === "ready" ? JSON.stringify([loaded.file.path, loaded.renderer.id]) : "";
   // A departing renderer flushes its last per-file state during unmount. That
-  // write belongs to its own key even after another file in this root opens.
+  // write belongs to its own key even after another file in this root opens;
+  // whether it is kept is the host's (`CadViewer` keeps the file on screen's alone,
+  // and drops this one once it has landed).
   const setRendererState = useCallback((value: JsonValue) => { if (latest.current.sourceId === source.id && rendererStateKey) changeState((previous) => ({ ...previous, renderers: { ...previous.renderers, [rendererStateKey]: value } })); }, [changeState, rendererStateKey, source.id]);
 
   // The renderer is re-rendered only when what it is handed changes: not by a panel drag, a

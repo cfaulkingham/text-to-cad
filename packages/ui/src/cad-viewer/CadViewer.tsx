@@ -24,7 +24,10 @@ export interface CadViewerProps<Model extends LibraryModel = LibraryModel> {
    * shows a file through `onShow`.
    */
   host: Omit<ViewerHost, 'navigation'>;
-  /** The tab's one store: the renderers' preferences, this root's viewer state, the home's layout. */
+  /**
+   * The tab's one store: the renderers' preferences, this root's viewer state, the home's layout,
+   * and the view of the file on screen, the only file view it keeps: leaving a file drops its view.
+   */
   tabStore: TabStore;
   /** The host's handle on the mounted view: its agent reads it, and the library's pictures come through it. */
   live: LiveRegistry;
@@ -90,6 +93,16 @@ export function CadViewer<Model extends LibraryModel = LibraryModel>({ client, h
   const shown = entry ? catalogPath(entry) : null;
   const navigationPath = shown ?? (catalog.hydrated ? normalizeCatalogPath(file) || null : null);
   useEffect(() => { latest.current.onShown?.(shown); }, [shown]);
+
+  // Only the file on screen keeps its view in the tab (`tab-store`): leaving a model — for another
+  // file, for the home, or for another root, which is another viewer — drops its camera, Display
+  // settings, pose and the rest, while a reload of the tab (which shows the same file) brings them
+  // back, and an update of the model keeps them. The departing renderer writes its view once more
+  // as it unmounts; that write is a cleanup of the commit that changed `file` (or replaced this
+  // viewer), and every cleanup of a commit runs before its effects, this one included, so it cannot
+  // bring the view back. The tab's settings are not a file's, and stay.
+  const rootId = host.files.id;
+  useEffect(() => { tabStore.files.retain(rootId, normalizeCatalogPath(file) || null); }, [tabStore, rootId, file]);
 
   // Refresh the catalog when the person comes back to the page: a model may have been rebuilt meanwhile.
   useEffect(() => {

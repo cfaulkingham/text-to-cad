@@ -24,7 +24,7 @@ turns the explorer.
 
 | The host (web, desktop) supplies | The shared UI decides |
 | --- | --- |
-| Where the tab record lives (`TabRecordStorage`: the web's sessionStorage, the desktop's per-tab store) | The record: its settings (the tree, the tool stack's layout, the appearance) and each file's view (its camera, Display settings, Playback settings and renderer slices), what is written when, and what is never stored (`@text-to-cad/ui/tab-store`, `kit/shell/fileView.js`) |
+| Where the tab record lives (`TabRecordStorage`: the web's sessionStorage, the desktop's per-tab store) | The record: its settings (the tree, the tool stack's layout, the appearance) and the view of the file on screen (its camera, Display settings, Playback settings and renderer slices), what is written when, and what is never stored (`@text-to-cad/ui/tab-store`, `kit/shell/fileView.js`) |
 | `navigation.home`, `links` (its version, GitHub, Discord, where a new issue opens, how a link opens) and `displayActions` (an appearance control) | The navbar's order and look, the version's menu, the panel toggles and what a new issue says |
 | `host.files`, `fileActions`, `navigation`, `clipboard`, `promptContext`, `attachments` | When a copy, capture or open happens and what it carries |
 | `host.environment`: color scheme, keyboard `platform`, `reducedMotion` | How the chrome honours them |
@@ -570,11 +570,15 @@ travels as a file (a picture sent beside the text is not named).
 ## Camera, animation and preview
 
 Cube face, edge and corner clicks turn the view and keep pan and zoom; dragging
-the cube orbits. Opening a file, or reloading the page, restores the camera the
-file was left at in the tab, and fits it only when there is none. Display settings,
-Explode/Clip, the pose, hidden and isolated parts and the tree's expansion come back
-with it; the tool, the selection and measurements never do — every open starts in
-the default tool with nothing selected.
+the cube orbits. Reloading the page restores the camera the file on screen was left
+at, and its Display settings, Explode/Clip, the pose, hidden and isolated parts and
+the tree's expansion come back with it. Only the model on screen keeps that view:
+leaving it — for another file, the home or another root — drops it, so opening a file,
+for the first time or again, fits it at the defaults. An update of the model on
+screen keeps its Display settings, Explode/Clip, hidden and isolated parts and its
+tree, and the pose while its joints are unchanged. The tool, the selection and
+measurements never come back — every open starts in the default tool with nothing
+selected.
 
 Zoom to Fit recenters and frames the whole original model at the current angle;
 Zoom to Selection frames the selection and is unavailable without one. Both are
@@ -603,11 +607,12 @@ starts the routine when Autoplay is on (off by default); leaving it stops the
 routine and puts the model back at rest, keeping the Routine for the next time
 while the file is open. An update of the model that leaves its routines as they were
 neither stops nor rewinds one that is playing; a changed routine starts at rest.
-Everything in Playback settings is the file's own and is remembered between leaving and re-entering preview and across a reload of the tab:
-Orbit on or off (on by default) and its speed (1×), Autoplay, and a Speed or Loop
-once chosen — until one is chosen, the routine's own apply. Another file has its
-own. Nothing of the routine — which one, its time, whether it plays — is saved.
-Orbit is not an animation setting.
+Everything in Playback settings is the file's own and is remembered between leaving
+and re-entering preview and across a reload of the tab: Orbit on or off (on by
+default) and its speed (1×), Autoplay, and a Speed or Loop once chosen — until one
+is chosen, the routine's own apply. Another file has its own, and a file the tab
+left starts at the defaults again. Nothing of the routine — which one, its time,
+whether it plays — is saved. Orbit is not an animation setting.
 
 Previewing turns off picks, hover, selection highlights, recognition, Draw,
 Measure, joint handles and Position as tools, and Explode and Clip, without
