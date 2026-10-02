@@ -7,6 +7,7 @@ import {
   PHOTOGRAPHIC_STUDIO_GROUND_DIFFUSE_WEIGHT,
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_INTENSITY,
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_NEUTRAL_MIX,
+  PHOTOGRAPHIC_STUDIO_GROUND_SHADOW_OPACITY,
   PHOTOGRAPHIC_STUDIO_KEY_DIRECTION,
   PHOTOGRAPHIC_STUDIO_KEY_ILLUMINANCE,
   PHOTOGRAPHIC_STUDIO_STAGE_RADIUS_MULTIPLIER
@@ -80,8 +81,30 @@ function disposeGround(state) {
   state.group.remove(state.ground);
   state.ground.geometry?.dispose?.();
   disposeMaterial(state.ground.material);
+  disposeMaterial(state.groundShadow?.material);
   state.ground = null;
+  state.groundShadow = null;
   state.groundKind = null;
+}
+
+// The physical floor is mostly self-lit backdrop color, so the key's own
+// shadow barely darkens it. A coplanar shadow catcher lays the key's cast
+// shadow over it — only where the key is actually blocked, never the falloff
+// of its cone — so the model sits on the floor instead of hovering over it.
+function createGroundShadow(THREE, ground) {
+  const material = new THREE.ShadowMaterial({ color: 0x000000, transparent: true, opacity: 0 });
+  material.depthWrite = false;
+  material.side = THREE.DoubleSide;
+  material.forceSinglePass = true;
+  material.polygonOffset = true;
+  material.polygonOffsetFactor = 1;
+  material.polygonOffsetUnits = 1;
+  const shadow = new THREE.Mesh(ground.geometry, material);
+  shadow.name = "studio-ground-shadow";
+  shadow.receiveShadow = true;
+  shadow.renderOrder = ground.renderOrder + 1;
+  ground.add(shadow);
+  return shadow;
 }
 
 function updatePhysicalGroundColor(material, color) {
@@ -120,6 +143,7 @@ function createState(THREE, runtime) {
     target,
     shadowMapSize: null,
     ground: null,
+    groundShadow: null,
     groundKind: null,
     original: {
       toneMapping: runtime.renderer.toneMapping,
@@ -174,6 +198,7 @@ function updateGround(THREE, state, configuration, bounds, sceneScale, extentBou
     ground.renderOrder = -3;
     state.group.add(ground);
     state.ground = ground;
+    state.groundShadow = kind === "physical" ? createGroundShadow(THREE, ground) : null;
     state.groundKind = kind;
   }
 
@@ -181,6 +206,11 @@ function updateGround(THREE, state, configuration, bounds, sceneScale, extentBou
     updatePhysicalGroundColor(state.ground.material, configuration.backdrop.groundColor);
   }
   state.ground.material.opacity = configuration.backdrop.groundOpacity;
+  if (state.groundShadow) {
+    // A see-through floor catches proportionally less of the shadow.
+    state.groundShadow.material.opacity = PHOTOGRAPHIC_STUDIO_GROUND_SHADOW_OPACITY * configuration.backdrop.groundOpacity;
+    state.groundShadow.visible = configuration.lighting.enabled;
+  }
   const minimumSize = sceneScale === "urdf" ? 0.5 : 100;
   // The plane's SIZE and where it is centred come from `extentBounds`: a caller whose
   // model moves hands over its rest placement, so posing or playing never rescales

@@ -165,7 +165,13 @@ rendering can keep the synchronous caller-owned path.
 The ground uses `PHOTOGRAPHIC_STUDIO_STAGE_RADIUS_MULTIPLIER` for its full
 square width. Camera fitting uses the same constant as far-plane padding, which
 keeps the finite two-triangle ground outside practical product views. Near-plane
-fitting includes the visible floor as well as the model.
+fitting includes the visible floor as well as the model. The physical floor is
+mostly self-lit backdrop color, so the key's own shadow barely darkens it: a
+coplanar `ShadowMaterial` catcher lays the key's cast shadow over it at
+`PHOTOGRAPHIC_STUDIO_GROUND_SHADOW_OPACITY` (0.35) times the floor's opacity,
+only where the key is blocked and never along its cone's falloff. It shows only
+while the studio lights the scene. A transparent legacy backdrop's floor is
+itself the catcher.
 
 Environment radiance and direct illumination are calibrated together at zero EV
 across colored assemblies, gray mechanical models, and authored metal/plastic

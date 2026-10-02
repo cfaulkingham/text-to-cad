@@ -166,6 +166,8 @@ still avoid unnecessary caps. See [responsive View updates](view-updates.md)
 for scheduling, resource caching, loading presentation and capture readiness.
 
 Floor defaults to model origin (Z=0), 60% opacity, with Lowest point available.
+While Render's lighting is on it carries the key light's cast shadow, as deep as
+the floor is opaque, so a model sits on it rather than hovering over it.
 Its double-sided shadow-receiving surface uses its actual elevation during
 camera depth fitting, avoiding the origin-placement near-plane gap. Its color
 and opacity are independent of Background.

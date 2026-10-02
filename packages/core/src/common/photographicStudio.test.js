@@ -11,6 +11,7 @@ import {
   PHOTOGRAPHIC_STUDIO_GROUND_DIFFUSE_WEIGHT,
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_INTENSITY,
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_NEUTRAL_MIX,
+  PHOTOGRAPHIC_STUDIO_GROUND_SHADOW_OPACITY,
   PHOTOGRAPHIC_STUDIO_KEY_DIRECTION,
   PHOTOGRAPHIC_STUDIO_STAGE_RADIUS_MULTIPLIER
 } from "./photographicStudioRig.js";
@@ -339,12 +340,34 @@ test("floor color and opacity update independently while both sides remain visib
     assert.equal(state.ground.material, material);
     assert.equal(material.opacity, groundOpacity);
     assert.equal(material.depthWrite, false);
+    // The self-lit floor catches the key's shadow in proportion to its own opacity.
+    assert.equal(state.groundShadow.material.opacity, PHOTOGRAPHIC_STUDIO_GROUND_SHADOW_OPACITY * groundOpacity);
   }
   applyPhotographicStudio(THREE, value, configuration({ transparent: true, groundOpacity: 0.4 }));
   assert.equal(state.ground.material.isShadowMaterial, true);
   assert.equal(state.ground.material.opacity, 0.4);
   assert.equal(state.ground.material.forceSinglePass, true);
+  assert.equal(state.groundShadow, null, "the transparent backdrop's floor is itself the shadow catcher");
   disposePhotographicStudio(value);
+});
+
+test("the physical floor carries the key's cast shadow while the studio lights it", () => {
+  const value = runtime();
+  const state = applyPhotographicStudio(THREE, value, configuration());
+  const shadow = state.ground.getObjectByName("studio-ground-shadow");
+  assert.equal(shadow, state.groundShadow);
+  assert.equal(shadow.material.isShadowMaterial, true);
+  assert.equal(shadow.receiveShadow, true);
+  assert.equal(shadow.geometry, state.ground.geometry);
+  assert.ok(shadow.renderOrder > state.ground.renderOrder, "drawn over the floor");
+  assert.equal(shadow.material.depthWrite, false);
+  assert.equal(shadow.visible, true);
+  const unlit = configuration();
+  unlit.lighting.enabled = false;
+  applyPhotographicStudio(THREE, value, unlit);
+  assert.equal(shadow.visible, false, "no key, no cast shadow");
+  disposePhotographicStudio(value);
+  assert.equal(value.scene.getObjectByName("studio-ground-shadow"), undefined);
 });
 
 
