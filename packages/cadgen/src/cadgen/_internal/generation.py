@@ -485,6 +485,18 @@ def _generate_part_outputs(
             wait_children = getattr(scene, "wait_child_outputs", None)
             if wait_children is not None:
                 wait_children()
+
+        def publish_document_preview(document_hash: str):
+            # The saved document's own tree, composed before its STEP is written:
+            # the one tree a viewer may show while this build runs (STORE.md §9b).
+            if writes_step and executors.sink_installed():
+                executors.emit_event(executors.model_event(
+                    _model_for_spec(spec), "building", phase="Saving STEP",
+                    documentPreview={
+                        "output": str(spec.step_path.expanduser().resolve()), "tree": document_hash,
+                        **({"surfaceProducer": surface_producer} if surface_producer is not None else {}),
+                    },
+                ))
         # Objects first: components + tree. Harmless if this build ends up not
         # publishing its record (publish rule below) — content-addressed and GC'd.
         writes_step = generated and bool(spec.step_output)
@@ -518,6 +530,7 @@ def _generate_part_outputs(
                     materials=getattr(scene, "materials", None),
                     child_documents=lambda: _pinned_child_documents(scene),
                     kept_document=lambda digest: _kept_document(spec, digest, expected_document_pair),
+                    on_document_preview=publish_document_preview,
                 )
             if stats.get("documentKept"):
                 logger.debug(f"kept {_display_path(spec.step_path)}: its writer input is unchanged")

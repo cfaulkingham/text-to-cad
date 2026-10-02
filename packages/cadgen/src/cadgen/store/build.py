@@ -910,6 +910,7 @@ def build_tree_through_step(
     materials: object = None,
     child_documents: Callable[[], Mapping[str, str]] | None = None,
     kept_document: Callable[[str], dict[str, Any] | None] | None = None,
+    on_document_preview: Callable[[str], None] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], str]:
     """Write STEP and return ``(result_hash, result_tree, stats, step_hash)``.
 
@@ -926,11 +927,15 @@ def build_tree_through_step(
     These private publication fields are not tree content. The caller owns
     document indexes, annotations and final filenames.
 
-    ``child_documents``, called only when the written bytes have no indexed
-    tree, maps each pinned child tree hash to the document tree that child's
+    ``child_documents``, called once the callback has returned (every child
+    saved), maps each pinned child tree hash to the document tree that child's
     record pins for it. With it, an all-link parent whose links are pure
-    translations composes its document tree from those instead of parsing the
-    STEP (``cadgen.store._compose_readback``); anything ineligible parses.
+    translations composes its document tree from those before writing the STEP
+    (``cadgen.store._compose_readback``) and binds it to the bytes once they
+    are written, in place of parsing them; anything ineligible takes the index
+    of already-seen bytes, then the parse. ``on_document_preview`` hears that
+    composed tree's hash before the STEP is written: the saved document's own
+    tree, which a viewer may show while the build runs (STORE.md §9b).
     ``CADGEN_VERIFY_READBACK=1`` parses as well and fails the build when a
     reused tree differs from the parse.
 
@@ -1071,6 +1076,21 @@ def build_tree_through_step(
         # Never resolve a newer pin or consult the authored shapes here.
         with timed("tree: prepare document"):
             document = prepared_document.materialize(root_name)
+    # Every child is saved once the callback returns, so an all-link parent's
+    # document tree can be composed now, before its STEP exists -- the slowest
+    # part of a large save is still to come, and a viewer can show this tree
+    # meanwhile, as the file it will be.
+    composed_document: str | None = None
+    if child_documents is not None and not force:
+        from cadgen.store._compose_readback import compose_document
+
+        with timed("tree: compose document from children"):
+            composed_document = compose_document(
+                walk=walk, descriptor=descriptor, root_name=root_name,
+                child_documents=child_documents, logger=logger,
+            )
+        if composed_document is not None and on_document_preview is not None:
+            on_document_preview(composed_document)
     with timed(f"tree: assemble STEP {step_path.name}"):
         step_path.parent.mkdir(parents=True, exist_ok=True)
         step_hash = export_build123d_step_file(document, step_path, logger=logger)
@@ -1084,18 +1104,21 @@ def build_tree_through_step(
     prepared_document = None
 
     with timed(f"tree: re-read STEP {step_path.name}"):
-        readback, damaged_document = (None, False) if force else _lookup_document_readback(step_path, step_hash=step_hash)
-        document_readback = "indexed" if readback is not None else "parsed"
-        if readback is None and not force and not damaged_document and child_documents is not None:
-            from cadgen.store._compose_readback import compose_document_readback
+        readback, damaged_document, document_readback = None, False, "parsed"
+        if composed_document is not None:
+            # The composed tree is the cold compile of these bytes whether or not
+            # they were seen before (STORE.md §3), so it stands in for the index.
+            from cadgen.store._compose_readback import bind_composed_readback
 
-            with timed("tree: compose document from children"):
-                readback = compose_document_readback(
-                    walk=walk, descriptor=descriptor, step_path=step_path, step_hash=step_hash,
-                    root_name=root_name, child_documents=child_documents, logger=logger,
-                )
+            readback = bind_composed_readback(
+                step_path=step_path, step_hash=step_hash, tree_hash=composed_document, logger=logger,
+            )
             if readback is not None:
                 document_readback = "composed"
+        if readback is None and not force:
+            readback, damaged_document = _lookup_document_readback(step_path, step_hash=step_hash)
+            if readback is not None:
+                document_readback = "indexed"
         scene = readback.scene if readback is not None else None
         if scene is None:
             scene = load_step_scene(step_path)

@@ -108,7 +108,8 @@ class Fixture(unittest.TestCase):
             links.append(extra)
         return bd.Compound(children=links, label="parent")
 
-    def build(self, shape, *, name="parent", force=False, documents=None, env=None, logger=None):
+    def build(self, shape, *, name="parent", force=False, documents=None, env=None, logger=None,
+              on_document_preview=None):
         from cadgen.store.build import build_tree_through_step
 
         resolver = (lambda: self.documents) if documents is None else (lambda: documents)
@@ -116,6 +117,7 @@ class Fixture(unittest.TestCase):
             return build_tree_through_step(
                 shape, self.root / f"{name}.step", root_name=name, force=force,
                 _internal_source_publication=True, child_documents=resolver, logger=logger,
+                on_document_preview=on_document_preview,
             )
 
     @staticmethod
@@ -150,6 +152,32 @@ class ComposedTreeTest(Fixture):
         for key in ("documentTree", "documentOccurrenceMap", "documentNodeMap", "documentAppearance"):
             self.assertEqual(stats[key], forced[key], key)
 
+    def test_the_saved_tree_is_announced_before_the_step_is_written(self):
+        from cadgen import step_export
+
+        announced, announced_at_write = [], []
+        write = step_export.export_build123d_step_file
+
+        def recording_write(*args, **kwargs):
+            announced_at_write.append(list(announced))
+            return write(*args, **kwargs)
+
+        with mock.patch.object(step_export, "export_build123d_step_file", side_effect=recording_write):
+            _, _, stats, _ = self.build(self.parent(), name="announced", on_document_preview=announced.append)
+        self.assertEqual(stats["documentReadback"], "composed")
+        self.assertEqual(announced, [stats["documentTree"]])
+        self.assertEqual(announced_at_write, [announced], "the tree is announced before the STEP is written")
+
+    def test_already_seen_bytes_bind_the_composed_tree_without_the_index(self):
+        from cadgen._internal import step_scene_package
+
+        _, _, first, step_hash = self.build(self.parent(), name="again")
+        with mock.patch.object(step_scene_package, "_lookup_document_readback",
+                               side_effect=AssertionError("the index was consulted")):
+            _, _, second, second_hash = self.build(self.parent(), name="again")
+        self.assertEqual(second_hash, step_hash)
+        self.assertEqual((second["documentReadback"], second["documentTree"]), ("composed", first["documentTree"]))
+
     def test_links_under_a_group_compose_the_group(self):
         _, _, stats, _ = self.build(self.parent(grouped=True), name="grouped")
         self.assertEqual(stats["documentReadback"], "composed")
@@ -178,7 +206,10 @@ class ComposedTreeTest(Fixture):
                     self.addCleanup(tree.write_bytes, payload)
                 name = label.replace(" ", "_")
                 logger = self.verbose_logger()
-                _, _, stats, _ = self.build(shape, name=name, documents=documents, logger=logger)
+                announced = []
+                _, _, stats, _ = self.build(shape, name=name, documents=documents, logger=logger,
+                                            on_document_preview=announced.append)
+                self.assertEqual(announced, [], "a parent that composes nothing announces nothing")
                 if label == "incomplete document tree":
                     tree.write_bytes(payload)
                 self.assertEqual(stats["documentReadback"], "parsed")

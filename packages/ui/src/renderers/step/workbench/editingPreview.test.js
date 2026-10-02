@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { editingBuildActive, initialEditingPreview, reduceEditingPreview } from "./editingPreview.js";
+import { editingBuildActive, initialEditingPreview, previewEntry, reduceEditingPreview } from "./editingPreview.js";
 
 const update = (revision, extra = {}) => ({ epoch: "a", revision, output: "/part.step", state: "building", ...extra });
 
@@ -40,4 +40,25 @@ test("a build the file moved past keeps no failure", () => {
 test("only a queued or running build is active", () => {
   for (const state of ["submitted", "queued", "building"]) assert.equal(editingBuildActive({ state }), true, state);
   for (const state of ["done", "failed", "disconnected", undefined]) assert.equal(editingBuildActive({ state }), false, String(state));
+});
+
+test("a build names the file's next tree only while the feed does", () => {
+  const preview = { tree: "next", url: "/__cad/store?file=next" };
+  const announced = reduceEditingPreview(initialEditingPreview(), update(4, { preview }));
+  assert.deepEqual(announced.preview, preview);
+  assert.equal(reduceEditingPreview(announced, update(4, { state: "failed", error: "boom" })).preview, null);
+  assert.equal(reduceEditingPreview(announced, { state: "disconnected" }).preview, null);
+  assert.equal(reduceEditingPreview(announced, update(5)).preview, null, "a newer build has announced nothing yet");
+});
+
+test("the file is shown as its announced tree, and is its own entry once written", () => {
+  const sidecar = { appearance: { materials: {} } };
+  const saved = { file: "car.step", url: "/__cad/store?file=old&documentHash=x", hash: "old", documentHash: "x", sourceSidecar: sidecar };
+  const state = { preview: { tree: "next", url: "/__cad/store?file=next" } };
+  const shown = previewEntry(saved, state);
+  assert.deepEqual([shown.file, shown.url, shown.hash, shown.documentHash], ["car.step", "/__cad/store?file=next", "next", ""]);
+  assert.equal(shown.sourceSidecar, sidecar, "the file's annotations stay until the save replaces them");
+  const written = { ...saved, url: "/__cad/store?file=next&documentHash=y", hash: "next", documentHash: "y" };
+  assert.equal(previewEntry(written, state), written);
+  assert.equal(previewEntry(saved, initialEditingPreview()), saved);
 });

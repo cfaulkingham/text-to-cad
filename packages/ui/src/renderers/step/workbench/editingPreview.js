@@ -1,6 +1,7 @@
 // A tab's view of the build feed for its file: whether a build is running, how far it has got and
-// whether it failed. Never geometry: the view always shows the saved file, updated in place when
-// the build writes it (STORE.md 9b).
+// whether it failed. The view always shows the saved file, updated in place when the build writes
+// it (STORE.md 9b) -- and a build that composed the file's own tree before writing it names that
+// tree as `preview`, which is shown as the file it is about to be. Never an authored tree.
 export const BUILDING_STATES = Object.freeze(["submitted", "queued", "building"]);
 
 export function initialEditingPreview() {
@@ -13,6 +14,7 @@ export function initialEditingPreview() {
     detail: "",
     updatedAt: 0,
     error: "",
+    preview: null,
   };
 }
 
@@ -24,7 +26,7 @@ export function editingBuildActive(state) {
 export function reduceEditingPreview(current, next) {
   if (!next || typeof next !== "object") return current;
   if (!next.epoch) {
-    return { ...current, state: "disconnected", phase: "", detail: "", updatedAt: 0, error: next.error || "" };
+    return { ...current, state: "disconnected", phase: "", detail: "", updatedAt: 0, error: next.error || "", preview: null };
   }
   const previous = current.epoch && current.epoch !== next.epoch ? initialEditingPreview() : current;
   const revision = Number(next.revision) || 0;
@@ -45,5 +47,21 @@ export function reduceEditingPreview(current, next) {
     error: superseded ? "" : next.error || "",
     output: next.output,
     file: next.file || next.output,
+    preview: documentPreview(next.preview),
   };
+}
+
+function documentPreview(preview) {
+  const tree = String(preview?.tree || "").trim();
+  const url = String(preview?.url || "").trim();
+  return tree && url ? { tree, url } : null;
+}
+
+/** The entry to show for `entry` while the feed names the file's next tree: the same file, its
+ * tree replaced by the one the build composed before writing it. That tree is the catalog's once
+ * the file is written, so the save that follows changes nothing on screen. */
+export function previewEntry(entry, state) {
+  const preview = state?.preview;
+  if (!entry || !preview || entry.hash === preview.tree) return entry;
+  return { ...entry, url: preview.url, hash: preview.tree, documentHash: "" };
 }

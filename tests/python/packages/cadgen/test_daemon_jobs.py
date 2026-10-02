@@ -106,8 +106,11 @@ class Lifecycle(unittest.TestCase):
         for sequence, tree in ((4, "latest"), (2, "late")):
             self.ledger.observe(self._event(self.model, "building", job=job["id"], sequence=sequence,
                                            preview={"output": output, "tree": tree, "kinematics": {"mates": []}}))
+        self.ledger.observe(self._event(self.model, "building", job=job["id"], sequence=5,
+                                       documentPreview={"output": output, "tree": "saved-tree"}))
         snapshot = self.ledger.snapshot()[0]
         self.assertEqual(snapshot["previews"][output]["tree"], "latest")
+        self.assertEqual(snapshot["documentPreviews"][output]["tree"], "saved-tree")
         snapshot["previews"][output]["kinematics"]["mates"].append("mutation")
         self.assertEqual(self.ledger.snapshot()[0]["previews"][output]["kinematics"]["mates"], [])
         self.ledger.observe(self._event(self.model, "done", job=job["id"]))

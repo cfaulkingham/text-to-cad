@@ -21,7 +21,7 @@ right.
 | [8](#8-gc-eviction-and-the-cap) | The sweeper: retired kinds, eviction to the cap, unreachable objects, a store two cadgens share, and why a pass needs no lock | anything that deletes |
 | [9](#9-the-daemon) | The build pool, job ledger and slots | daemon, workers, jobs |
 | [9a](#9a-lazy-children) | Lazy children: pins at the call, forcing, exact-`Compound` reference preservation | a decorated call's return, parallel child builds |
-| [9b](#9b-editing-previews-and-explicit-saves) | Announced preview trees, the build feed, explicit saves | what the viewer says while a build runs |
+| [9b](#9b-editing-previews-and-explicit-saves) | Announced preview trees, the build feed, a saved file's tree shown early, explicit saves | what the viewer says and shows while a build runs |
 | [10](#10-debugging) | `store why`, resolving a tree, resets smallest first | diagnosing staleness |
 | [11](#11-never) | The explicit prohibitions | before proposing any of them |
 
@@ -142,7 +142,9 @@ test:
    each `shape()` returns privately copied topology. An already open scene
    survives document replacement or deletion of its cached objects.
    A build's preview tree (§9b) is the build's own: a parent may pin a child's,
-   and no viewer displays one.
+   and no viewer displays one. A viewer displays only a saved file's tree --
+   including one a build composed before writing the file (§9b), which is the
+   file's tree once written.
 3. **Records are deletable.** `rm -rf index/model index/output` loses no
    artifact: every reader still works from objects; a rebuild re-creates the
    records without rebuilding a tree whose objects exist.
@@ -325,35 +327,36 @@ identity. A real one (`link_arm`: a bar plus two placements of a pin model):
   components. Current authored PBR is rebound after readback, without consulting
   source records, output indexes or staged sidecars.
 
-  **Tree composition.** A child's read-back is context-free. The parent's
-  STEP places each child's prototypes from the same bytes the child's own save
+  **Tree composition.** A child's read-back is context-free. The parent's STEP
+  places each child's prototypes from the same bytes the child's own save
   emitted, every group at the identity and every leaf at its flattened world
   transform, so the components, hierarchy, names, colours and the linear part
   of every leaf placement the parent's STEP reads back are exactly those in
   the child's own document tree; only each leaf's translation is new, and it
   is the number the parent's descriptor handed the writer, as its STEP text
   round trip (`store/_compose_readback.py`, `written_real`). A saved build of
-  a parent whose fresh bytes have no indexed tree therefore composes its
-  document tree from its children's document trees instead of parsing the
-  STEP it just wrote, when all of this holds, checked exactly: the result is
-  links only (no geometry of its own); every link is a pure translation (its
-  linear part exactly the identity) with no link colour, and every link and
-  group name survives the label round trip; every link's child record still
-  pins the tree the parent used, with a complete `documentTree` whose root is
-  an assembly, whose components are all native and whose every node is named;
-  every leaf box the canonical bounds path would take is already in
-  `index/bounds` from the child's publication, under a leaf layout (§2)
-  whose leaves all sit at the prototype's placement; and the writer emulation
-  reproduces every translation in each child's own document from that
-  child's descriptor. Anything else — a rotated or coloured link, a part
-  child, a parent with geometry of its own, a child rebuilt since the parent
-  called it, a missing object or box — takes the ordinary read-back of the
-  written bytes, as does a composed tree that fails the authored-to-written
-  correspondence. The composed tree is published and captured exactly as an
-  indexed read-back of already-seen bytes is, so the correspondence check,
-  the canonical maps and the restore are the same code, and `index/document`
-  receives a tree equal to the cold compile of the bytes. The build reports
-  which path it took as `documentReadback` (`composed`, `indexed`, `parsed`);
+  a parent therefore composes its document tree from its children's document
+  trees before writing its STEP, and binds it to the bytes once written
+  instead of parsing them or consulting the index of already-seen bytes (§9b
+  announces it meanwhile), when all of this holds, checked exactly: the result
+  is links only (no geometry of its own); every link is a pure translation
+  (its linear part exactly the identity) with no link colour, and every link
+  and group name survives the label round trip; every link's child record
+  still pins the tree the parent used, with a complete `documentTree` whose
+  root is an assembly, whose components are all native and whose every node is
+  named; every leaf box the canonical bounds path would take is already in
+  `index/bounds` from the child's publication, under a leaf layout (§2) whose
+  leaves all sit at the prototype's placement; and the writer emulation
+  reproduces every translation in each child's own document from that child's
+  descriptor. Anything else — a rotated or coloured link, a part child, a
+  parent with geometry of its own, a child rebuilt since the parent called it,
+  a missing object or box — takes the ordinary read-back of the written bytes,
+  as does a composed tree that fails the authored-to-written correspondence.
+  The composed tree is published and captured exactly as an indexed read-back
+  of already-seen bytes is, so the correspondence check, the canonical maps
+  and the restore are the same code, and `index/document` receives a tree
+  equal to the cold compile of the bytes. The build reports which path it took
+  as `documentReadback` (`composed`, `indexed`, `parsed`);
   `CADGEN_VERIFY_READBACK=1` (§10) proves a corpus by parsing as well and
   failing the build on any difference. This adds no staleness class: the gate
   decides whether the parent runs by its sources, and what it publishes for
@@ -1437,16 +1440,31 @@ and saved STEP remain the recovery path.
 The viewer shows the saved file, always: the catalog's bytes with the topology
 and annotations that belong to them, replaced in place when a build writes new
 bytes (the components it already holds are retained: the last paragraph). It reads
-this channel (`GET /__cad/preview`) for status alone: whether a build of the file
-is queued or running and its phase, and a failure with its message. An answer
-carries no geometry; the server does no kernel work and exposes no
-source/closure/model record. A finished build whose output is no longer the file
-on disk -- the bytes it saved replaced or, if it saved nothing, the file written
-after it ended -- is reported `superseded`, and its failure is no longer the news.
-The viewer reads the catalog again when a build finishes or is superseded, rather
-than at its next poll. It never announces a background file write it did not
-perform. A saved-tree identity change clears incompatible selection and
-measurement state.
+this channel (`GET /__cad/preview`) for status: whether a build of the file
+is queued or running and its phase, and a failure with its message. The server
+does no kernel work and exposes no source/closure/model record. A finished build
+whose output is no longer the file on disk -- the bytes it saved replaced or, if
+it saved nothing, the file written after it ended -- is reported `superseded`,
+and its failure is no longer the news. The viewer reads the catalog again when a
+build finishes or is superseded, rather than at its next poll. It never announces
+a background file write it did not perform. A saved-tree identity change clears
+incompatible selection and measurement state.
+
+The one tree an answer may name is the saved file's own, early. A parent whose
+document tree is composed from its children's (§3) composes it before writing
+its STEP -- every child is saved by then, and the tree needs no bytes -- and
+announces it (`documentPreview`, recorded per output as `documentPreviews`). That
+tree is the cold compile of the bytes the build is about to write, so it is the
+catalog's tree for the file once they are written, and the read-back binds it to
+them instead of consulting the index of already-seen bytes. The feed reports it
+as `preview` (its hash and its `/__cad/store` URL) while that build is queued or
+running, and after it finishes only while the build saved exactly that tree and
+the file is still the one it saved. The viewer shows that tree as the file: the
+same identity, so the components it holds are kept, nothing is derived again, and
+the save that follows changes nothing on screen. The annotations shown with it
+are the file's current ones until the save replaces them. A failed build, or one
+whose save read back another tree, shows the catalog. No authored tree is ever
+named, and a build that composes nothing announces nothing.
 
 An open editing tab holds one request against an opaque ledger cursor scoped
 to its output and store. A matching change wakes it immediately; unrelated jobs
