@@ -9,7 +9,8 @@ restart expires this channel; the catalog keeps serving the bytes on disk.
 The one geometry it names is the saved file's own: a build that composed its document tree
 before writing the STEP announces that tree, which is the catalog's tree for the file once it
 is written. ``preview`` carries its hash and store URL while the build runs, and after it
-finishes only while the file is the one it saved with that tree -- never an authored tree.
+finishes only while the file is the one it saved with that tree -- never an authored tree, and
+never by a build that writes a sidecar, whose declarations are bound to the bytes it precedes.
 """
 
 from __future__ import annotations

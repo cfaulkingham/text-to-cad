@@ -59,9 +59,11 @@ function documentPreview(preview) {
 
 /** The entry to show for `entry` while the feed names the file's next tree: the same file, its
  * tree replaced by the one the build composed before writing it. That tree is the catalog's once
- * the file is written, so the save that follows changes nothing on screen. */
+ * the file is written, so the save that follows changes nothing on screen. A file with a sidecar
+ * is shown as saved: its kinematics, finishes and routines are bound to the STEP's bytes, which
+ * the announced tree precedes. */
 export function previewEntry(entry, state) {
   const preview = state?.preview;
-  if (!entry || !preview || entry.hash === preview.tree) return entry;
+  if (!entry || !preview || entry.hash === preview.tree || entry.sourceSidecar || entry.sourceUrl) return entry;
   return { ...entry, url: preview.url, hash: preview.tree, documentHash: "" };
 }

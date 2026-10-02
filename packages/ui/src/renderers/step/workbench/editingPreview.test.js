@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { SOURCE_SIDECAR_SCHEMA_VERSION, validateSourceSidecar } from "@text-to-cad/core/common/sourceSidecar.js";
 import { editingBuildActive, initialEditingPreview, previewEntry, reduceEditingPreview } from "./editingPreview.js";
 
 const update = (revision, extra = {}) => ({ epoch: "a", revision, output: "/part.step", state: "building", ...extra });
@@ -52,13 +53,24 @@ test("a build names the file's next tree only while the feed does", () => {
 });
 
 test("the file is shown as its announced tree, and is its own entry once written", () => {
-  const sidecar = { appearance: { materials: {} } };
-  const saved = { file: "car.step", url: "/__cad/store?file=old&documentHash=x", hash: "old", documentHash: "x", sourceSidecar: sidecar };
+  const saved = { file: "car.step", url: "/__cad/store?file=old&documentHash=x", hash: "old", documentHash: "x" };
   const state = { preview: { tree: "next", url: "/__cad/store?file=next" } };
   const shown = previewEntry(saved, state);
   assert.deepEqual([shown.file, shown.url, shown.hash, shown.documentHash], ["car.step", "/__cad/store?file=next", "next", ""]);
-  assert.equal(shown.sourceSidecar, sidecar, "the file's annotations stay until the save replaces them");
   const written = { ...saved, url: "/__cad/store?file=next&documentHash=y", hash: "next", documentHash: "y" };
   assert.equal(previewEntry(written, state), written);
   assert.equal(previewEntry(saved, initialEditingPreview()), saved);
+});
+
+test("a file with a sidecar is shown as saved until its save lands", () => {
+  // The viewer validates the sidecar against the entry's STEP bytes, which the announced tree precedes.
+  const documentHash = "a".repeat(64);
+  const sourceSidecar = { schemaVersion: SOURCE_SIDECAR_SCHEMA_VERSION, documentHash };
+  const saved = {
+    file: "car.step", url: `/__cad/store?file=old&documentHash=${documentHash}`, hash: "old", documentHash,
+    sourceUrl: "/__cad/asset?file=car.step.json", sourceSidecar,
+  };
+  const shown = previewEntry(saved, { preview: { tree: "next", url: "/__cad/store?file=next" } });
+  assert.equal(shown, saved);
+  assert.doesNotThrow(() => validateSourceSidecar(shown.sourceSidecar, { documentHash: shown.documentHash }));
 });

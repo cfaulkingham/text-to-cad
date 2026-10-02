@@ -143,8 +143,8 @@ test:
    survives document replacement or deletion of its cached objects.
    A build's preview tree (§9b) is the build's own: a parent may pin a child's,
    and no viewer displays one. A viewer displays only a saved file's tree --
-   including one a build composed before writing the file (§9b), which is the
-   file's tree once written.
+   including, for a file with no sidecar, one a build composed before writing
+   the file (§9b), which is the file's tree once written.
 3. **Records are deletable.** `rm -rf index/model index/output` loses no
    artifact: every reader still works from objects; a rebuild re-creates the
    records without rebuilding a tree whose objects exist.
@@ -1461,10 +1461,13 @@ as `preview` (its hash and its `/__cad/store` URL) while that build is queued or
 running, and after it finishes only while the build saved exactly that tree and
 the file is still the one it saved. The viewer shows that tree as the file: the
 same identity, so the components it holds are kept, nothing is derived again, and
-the save that follows changes nothing on screen. The annotations shown with it
-are the file's current ones until the save replaces them. A failed build, or one
-whose save read back another tree, shows the catalog. No authored tree is ever
-named, and a build that composes nothing announces nothing.
+the save that follows changes nothing on screen. A build that writes a sidecar
+announces nothing, and a viewer shows no announced tree for a file that has one:
+a sidecar's kinematics, finishes and routines are bound to the STEP's bytes (the
+digest-bound sidecar, §5), which the tree precedes, so such a file changes when
+it is saved. A failed build, or one whose save read back another tree, shows the
+catalog. No authored tree is ever named, and a build that composes nothing
+announces nothing.
 
 An open editing tab holds one request against an opaque ledger cursor scoped
 to its output and store. A matching change wakes it immediately; unrelated jobs
