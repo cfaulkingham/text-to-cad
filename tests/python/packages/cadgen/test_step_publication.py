@@ -146,6 +146,25 @@ class StepPublicationTests(unittest.TestCase):
             self.assertIn("kept STEP", output.getvalue())
             self.assertEqual(step_reads(), 0, reads)
 
+    def test_a_job_takes_one_gate_verdict_before_its_body(self) -> None:
+        # The fast path's verdict serves the peer check, the annotation refresh
+        # and the reuse check of the same job; only the already-stale notice
+        # after publishing asks the gate again.
+        from cadgen.store import gate
+
+        self.assertEqual(self.build(10, annotated=True), 0, self.output)
+        asked: list[str] = []
+        original = gate.stale
+
+        def counted(model, *, memo=None):
+            if memo is None:
+                asked.append(str(model))
+            return original(model, memo=memo)
+
+        with mock.patch.object(gate, "stale", side_effect=counted):
+            self.assertEqual(self.build(12, annotated=True), 0, self.output)
+        self.assertEqual(len(asked), 2, asked)
+
     def test_failed_readback_keeps_the_saved_pair(self) -> None:
         self.assertEqual(self.build(10), 0, self.output)
         before = self.step.read_bytes()

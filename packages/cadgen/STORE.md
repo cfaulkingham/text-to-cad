@@ -749,6 +749,12 @@ build renames into place is remembered by the digest its writer took: a rename
 keeps the written file's device, inode, size and mtime, so a path that still
 shows that identity, settled before the rename, holds those bytes.
 
+A job asks the gate once before its body. That verdict answers the no-op check,
+the check for a peer that published meanwhile, the annotation refresh and the
+reuse check; it is taken again only after the job waited for a slot, or after
+another model of the same run was built, either of which can change it. The
+already-stale notice after publishing asks anew (§9a).
+
 Mesh tolerances and argv flags are not inputs. A model run's
 `--mesh-tolerance` / `--mesh-angular-tolerance` override every declared mesh's
 tolerance for that run (flag > declaration > `@step` > default): each mesh's

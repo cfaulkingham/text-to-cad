@@ -804,17 +804,22 @@ def _generate_step_outputs(
     force: bool = False,
     logger: CliLogger | None = None,
     progress: object | None = None,
+    verdict: object | None = None,
 ) -> GeneratedStepResult:
+    """``verdict`` is the gate's verdict this job already took for ``spec``
+    (``generate_step_targets``); without one the gate is asked here."""
     preloaded_scene: LoadedStepScene | None = None
+    if not force and spec.source == "generated" and verdict is None:
+        verdict = _gate_verdict(spec)
     if not force and spec.source == "generated":
         from cadgen._internal.annotation_refresh import refresh_annotations
 
-        refreshed_tree = refresh_annotations(spec)
+        refreshed_tree = refresh_annotations(spec, verdict=verdict)
         if refreshed_tree is not None:
             _current_source_result(spec, refreshed_tree)
             _produce_declared_mesh_exports(spec, logger=logger, source_tree=refreshed_tree)
             return GeneratedStepResult(spec=spec, scene=None, tree=refreshed_tree)
-    reuse_tree = _checked_source_tree(spec) if not force else None
+    reuse_tree = _checked_source_tree(spec, verdict) if not force else None
     # Reuse fast path: skip the build when the tree is already present and
     # current and nothing forces a run. A generated model's freshness rides on its recorded
     # source closure; an imported/committed STEP's freshness rides on the STEP hash recorded in
@@ -999,11 +1004,14 @@ def _generate_step_outputs_for_cli(
     logger: CliLogger,
     force: bool = False,
     progress: object | None = None,
+    verdict: object | None = None,
 ) -> GeneratedStepResult:
     kwargs: dict[str, object] = {
         "entries_by_step_path": entries_by_step_path,
         "progress": progress,
     }
+    if verdict is not None:
+        kwargs["verdict"] = verdict
     if force:
         kwargs["force"] = True
     if logger.verbose:
@@ -1219,8 +1227,11 @@ def _run_with_spec_generation_status(
     skip_if_current: Callable[[EntrySpec], bool | str | None] | None = None,
     progress_sink: object | None = None,
     logger: CliLogger | None = None,
+    on_queued: Callable[[], None] | None = None,
 ) -> object:
     """Run ``action`` under the model's progress record.
+
+    ``on_queued`` is told when the job had to wait for a slot before its body.
 
     Delegates to :func:`cadgen.coordination.artifact_build`, the SAME primitive
     ``cadgen.step_artifact_cli`` uses, so every producer reports the same way.
@@ -1259,7 +1270,12 @@ def _run_with_spec_generation_status(
         # in the tree only when the slot did not come at once.
         from cadgen.authoring import settle_child_builds
 
-        with broker.held(spec.source_ref, on_queued=lambda: _tree_event(spec, "queued")), settle_child_builds():
+        def queued() -> None:
+            _tree_event(spec, "queued")
+            if on_queued is not None:
+                on_queued()
+
+        with broker.held(spec.source_ref, on_queued=queued), settle_child_builds():
             _tree_event(spec, "building", phase="generate")
             try:
                 result = action(spec, run)
@@ -1361,13 +1377,22 @@ def _assembly_is_current(spec: EntrySpec) -> bool:
     return model is not None and not stale(model).stale
 
 
-def _checked_source_tree(spec: EntrySpec) -> str | None:
-    """The exact source result checked by this gate invocation, if current."""
+def _gate_verdict(spec: EntrySpec):
+    """The gate's verdict on a generated model (``store.gate.stale``), or None."""
     if spec.source != "generated" or spec.step_path is None:
         return None
     from cadgen.store.gate import stale
 
-    verdict = stale(_model_for_spec(spec))
+    return stale(_model_for_spec(spec))
+
+
+def _checked_source_tree(spec: EntrySpec, verdict: object | None = None) -> str | None:
+    """The exact source result ``verdict`` checked, if current; without a
+    verdict the gate is asked now."""
+    if spec.source != "generated" or spec.step_path is None:
+        return None
+    if verdict is None:
+        verdict = _gate_verdict(spec)
     return verdict.tree if not verdict.stale else None
 
 
@@ -1456,12 +1481,22 @@ def generate_step_targets(
     # Children are not rebuilt here any more: a parent depends on its children by
     # RESULT (their pinned trees, gate clause 3), and a stale child is built when
     # the parent's body calls it (cadgen.authoring._compose_child).
+    # One gate verdict per model per job: the fast path's, re-taken only once the
+    # job waited for a slot or another model of this run built, either of which
+    # can change the answer. The already-stale notice after publishing asks anew.
+    verdicts: dict[str, object] = {}
+
+    def verdict_for(spec: EntrySpec):
+        if spec.source_ref not in verdicts:
+            verdicts[spec.source_ref] = _gate_verdict(spec)
+        return verdicts[spec.source_ref]
+
     # No-op fast path: skip recomposing a model the gate says is current.
     if not force:
         current_trees = {
             spec.source_ref: tree
             for spec in selected_specs
-            if (tree := _checked_source_tree(spec)) is not None
+            if (tree := _checked_source_tree(spec, verdict_for(spec))) is not None
         }
         current_specs = [spec for spec in selected_specs if spec.source_ref in current_trees]
         if current_specs:
@@ -1492,7 +1527,7 @@ def generate_step_targets(
     def _built_by_a_peer(spec: EntrySpec) -> str | None:
         if force:
             return None
-        return _checked_source_tree(spec)
+        return _checked_source_tree(spec, verdict_for(spec))
 
     def generate_step(spec: EntrySpec, progress_sink: object | None = None) -> object:
         def build(tracked_spec: EntrySpec, reporter: object) -> object:
@@ -1502,23 +1537,28 @@ def generate_step_targets(
                 logger=logger,
                 force=force,
                 progress=reporter,
+                verdict=None if force else verdict_for(tracked_spec),
             )
 
         from cadgen.daemon.executors import capture_source_result
 
-        with capture_source_result(_model_for_spec(spec)) as captured:
-            result = _run_with_spec_generation_status(
-                spec,
-                "step",
-                build,
-                skip_if_current=_built_by_a_peer,
-                progress_sink=progress_sink,
-                logger=logger,
-            )
-            captured._finish(0)
-            if spec.source == "generated":
-                result.tree = captured.wait_result()
-            return result
+        try:
+            with capture_source_result(_model_for_spec(spec)) as captured:
+                result = _run_with_spec_generation_status(
+                    spec,
+                    "step",
+                    build,
+                    skip_if_current=_built_by_a_peer,
+                    progress_sink=progress_sink,
+                    logger=logger,
+                    on_queued=lambda: verdicts.pop(spec.source_ref, None),
+                )
+                captured._finish(0)
+                if spec.source == "generated":
+                    result.tree = captured.wait_result()
+                return result
+        finally:
+            verdicts.clear()
 
     results = _run_selected_specs(
         selected_specs,
