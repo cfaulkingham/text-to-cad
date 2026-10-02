@@ -110,10 +110,41 @@ def _sha256_file(path: Path) -> str | None:
     return digest
 
 
+def remember_renamed_digest(path: Path, digest: str, staged: tuple | None) -> None:
+    """Seed the memo for ``path``, which this process wrote under another name,
+    hashed as ``digest``, and renamed into place.
+
+    ``staged`` is the written file's stamp (:func:`file_stamp`) taken just
+    before the rename. A rename keeps a file's device, inode, size and mtime and
+    moves only its ctime, so a ``path`` that still shows the staged identity is
+    those bytes, and nothing reads them again. The staged stamp must already be
+    settled, so any write after it would have shown; otherwise this does
+    nothing and the next lookup reads the file."""
+    if staged is None or not _stamp_is_settled(staged):
+        return
+    after = _file_stamp(path)
+    if after is None or after[1:5] != staged[1:5]:
+        return
+    with _DIGESTS_LOCK:
+        _DIGESTS[str(path)] = (after, digest)
+        _DIGESTS.move_to_end(str(path))
+        if len(_DIGESTS) > _DIGESTS_CAPACITY:
+            _DIGESTS.popitem(last=False)
+
+
+def file_stamp(path: Path) -> tuple | None:
+    """The identity :func:`remember_renamed_digest` compares, or None when absent."""
+    return _file_stamp(path)
+
+
 def _hash_file(path: Path) -> str | None:
+    from cadgen._internal.atomic_replace import open_with_ladder
+
     digest = hashlib.sha256()
     try:
-        with open(path, "rb") as handle:
+        # Through the ladder: a peer build publishing the same model may be
+        # renaming over this file, which Windows refuses an open for (STORE.md §7).
+        with open_with_ladder(path, "rb") as handle:
             for chunk in iter(lambda: handle.read(1 << 20), b""):
                 digest.update(chunk)
     except OSError:

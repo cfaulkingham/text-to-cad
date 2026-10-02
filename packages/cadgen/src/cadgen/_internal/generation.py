@@ -109,9 +109,18 @@ def _sha256_or_none(path: Path) -> str | None:
 
 
 def _document_pair_state(step_path: Path) -> tuple[str | None, str | None]:
-    from cadgen._internal.source_sidecar import source_sidecar_path
+    """The saved STEP's and its sidecar's sha256, None for a file that is absent.
 
-    return _sha256_or_none(step_path), _sha256_or_none(source_sidecar_path(step_path))
+    Through the gate's digest memo (``store.gate._sha256_file``), which one job
+    already consults for these very files: a file whose settled identity has
+    not moved since this process hashed it, or since it renamed its own written
+    copy into place, is not read again (STORE.md §4). A label edit keeps a STEP
+    of hundreds of megabytes, and used to read it once per call."""
+    from cadgen._internal.source_sidecar import source_sidecar_path
+    from cadgen.store.gate import _sha256_file
+
+    step = Path(step_path).expanduser().resolve()
+    return _sha256_file(step), _sha256_file(source_sidecar_path(step))
 
 
 def _publish_sidecar(staged_step: Path, entry_path: Path) -> None:
@@ -740,7 +749,13 @@ def _generate_part_outputs(
                 # saved readers can recover from a missing cache by those bytes.
                 # A kept document is already in place, byte for byte.
                 if not stats.get("documentKept"):
+                    from cadgen.store.gate import file_stamp, remember_renamed_digest
+
+                    # The written copy's identity survives the rename, so its
+                    # digest needs no second read of the saved document.
+                    staged_identity = file_stamp(staged_step)
                     replace_atomic(staged_step, spec.step_path)
+                    remember_renamed_digest(spec.step_path.expanduser().resolve(), exported_hash, staged_identity)
                 _publish_sidecar(staged_step, spec.entry_path)
                 actual_pair = _document_pair_state(spec.step_path)
                 expected_sidecar = outputs.get(str(source_sidecar_path(spec.entry_path).resolve()), {}).get("sha256")

@@ -107,6 +107,45 @@ class StepPublicationTests(unittest.TestCase):
         self.assertIn("edgeClassification", tree["capabilities"])
         self.assertNotIn("stepHash", tree)
 
+    def test_a_job_reads_its_saved_step_at_most_once(self) -> None:
+        # Every digest a job takes of its saved document goes through the
+        # gate's settled-stamp memo, and a document the build renamed into
+        # place is known by the digest its writer took. A label edit keeps a
+        # STEP of hundreds of megabytes and used to read it once per check.
+        from cadgen._internal import generation
+        from cadgen.cli._run_model import run_model_argv
+        from cadgen.store import gate
+
+        self.assertEqual(self.build(10), 0, self.output)
+        reads: list[Path] = []
+        hash_file, sha256_of = gate._hash_file, generation._sha256_of
+
+        def counted(original):
+            def read(path):
+                reads.append(Path(path).resolve())
+                return original(path)
+            return read
+
+        def step_reads() -> int:
+            return sum(path == self.step.resolve() for path in reads)
+
+        with mock.patch.object(gate, "_stamp_is_settled", return_value=True), \
+                mock.patch.object(gate, "_hash_file", side_effect=counted(hash_file)), \
+                mock.patch.object(generation, "_sha256_of", side_effect=counted(sha256_of)):
+            # A new document: the previous one may be read once, the new one never.
+            self.assertEqual(self.build(12), 0, self.output)
+            self.assertLessEqual(step_reads(), 1, reads)
+            reads.clear()
+            # A label edit keeps the document, and nothing reads it.
+            self.model.write_text(self.model.read_text().replace(
+                "    return bd.Box(SIZE, 8, 6)\n", "    box = bd.Box(SIZE, 8, 6)\n    box.label = 'renamed'\n    return box\n"),
+                encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                self.assertEqual(run_model_argv([str(self.model)]), 0, output.getvalue())
+            self.assertIn("kept STEP", output.getvalue())
+            self.assertEqual(step_reads(), 0, reads)
+
     def test_failed_readback_keeps_the_saved_pair(self) -> None:
         self.assertEqual(self.build(10), 0, self.output)
         before = self.step.read_bytes()

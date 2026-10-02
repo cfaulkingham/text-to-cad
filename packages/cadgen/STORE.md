@@ -734,7 +734,12 @@ build evaluates the gate many times over the same closures, and a large
 assembly's STEP is hundreds of megabytes. A later evaluation stats each file and
 reuses the verdict while the file keeps the identity (device, inode, size, mtime,
 ctime) observed around its verified read, under §10's settled-stamp rule.
-Deleting, replacing, truncating or rewriting a file verifies it again.
+Deleting, replacing, truncating or rewriting a file verifies it again. A build's
+own checks of its saved document and sidecar — before the body runs, before it
+publishes, after its rename — read through the same memo, and a document the
+build renames into place is remembered by the digest its writer took: a rename
+keeps the written file's device, inode, size and mtime, so a path that still
+shows that identity, settled before the rename, holds those bytes.
 
 Mesh tolerances and argv flags are not inputs. A model run's
 `--mesh-tolerance` / `--mesh-angular-tolerance` override every declared mesh's
