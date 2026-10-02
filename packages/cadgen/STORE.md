@@ -1575,9 +1575,10 @@ supersession does not cancel their exports.
   isolated and returns a newly parsed flattened view to every caller. The gate's
   completeness check (`tree_complete`) is such a consumer, and its output
   digests follow the same rule (§4). The CAD Viewer's surface routes are not:
-  they keep a tree's verified component map for the life of their process and,
-  per request, stat the tree and the objects of the components it names, so a
-  deleted one sends the tree back through the complete verification.
+  they verify a tree's component map once and keep it, for the eight trees
+  they served last, and per request stat the tree and the objects of the
+  components it names, so a deleted one sends the tree back through the
+  complete verification.
   Components carry `brep`, `codec` and `faceColors`; display SURF resolves
   separately through `store.surfaces` and `index/surface`.
 - `CADGEN_VERIFY_READBACK=1` makes every saved build that reuses a document
