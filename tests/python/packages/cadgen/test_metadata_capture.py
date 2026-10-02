@@ -295,6 +295,52 @@ class MetadataCapture(unittest.TestCase):
                     target.write_bytes(original)
         self.assertEqual(trees.capture_tree(self.tree), (self.geometry, self.payloads))
 
+    def test_the_viewer_verifies_a_tree_once_and_stats_what_each_request_names(self):
+        from cadgen.viewer import surfaces as viewer_surfaces
+
+        record = surfaces.derive(self.tree, [self.cid], producer=self.producer)[self.cid]
+        surf = object_path(record["object"])
+        resolve = lambda: self.manager.resolve(json.dumps(self.request).encode())["components"][self.cid]["state"]
+        serve = lambda: pinned_surface_object(self.tree, record["surfaceInput"], record["object"])
+        self.assertEqual((resolve(), serve()), ("ready", surf))
+        with mock.patch.object(viewer_surfaces, "capture_tree", side_effect=AssertionError("verified again")):
+            for _ in range(3):
+                self.assertEqual((resolve(), serve()), ("ready", surf))
+
+        # GC or eviction deleting what a request names sends the tree back through the
+        # complete verification, which fails as it did before the tree was pinned.
+        for digest in (self.geometry["components"][self.cid]["brep"], self.tree):
+            target = object_path(digest)
+            original = target.read_bytes()
+            target.unlink()
+            try:
+                with mock.patch("cadgen.daemon.artifacts.submit_artifact", side_effect=AssertionError("missing object admitted")):
+                    for call in (resolve, serve):
+                        with self.assertRaises(FileNotFoundError):
+                            call()
+            finally:
+                target.write_bytes(original)
+            self.assertEqual((resolve(), serve()), ("ready", surf))
+        surf_bytes = surf.read_bytes()
+        surf.unlink()
+        try:
+            self.assertIsNone(serve())
+        finally:
+            surf.write_bytes(surf_bytes)
+
+        # A component no request names is not looked at; a derivation still verifies
+        # the whole closure before it writes anything.
+        other = next(entry for cid, entry in self.geometry["components"].items() if cid != self.cid)
+        target = object_path(other["brep"])
+        original = target.read_bytes()
+        target.unlink()
+        try:
+            self.assertEqual(serve(), surf)
+            with self.assertRaises(FileNotFoundError):
+                surfaces.derive(self.tree, [self.cid], producer=self.producer)
+        finally:
+            target.write_bytes(original)
+
     def test_damage_inside_one_write_clock_tick_is_never_certified(self):
         """A stamp a later write could reproduce must not certify a cache entry.
 
