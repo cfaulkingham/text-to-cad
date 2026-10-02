@@ -224,6 +224,13 @@ def catalog_revision(entries) -> str:
     return hashlib.sha256(json.dumps(entries, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24]
 
 
+def if_none_match(header: str, tag: str) -> bool:
+    """Whether an ``If-None-Match`` header holds ``tag``: compared weakly, as a GET's is
+    (RFC 9110 §13.1.2), or ``*``, since there is always a catalog."""
+    return any(candidate == "*" or candidate.removeprefix("W/") == tag
+               for candidate in (part.strip() for part in str(header or "").split(",")))
+
+
 # A project's files are served as data, never as pages. Opened straight in the browser, one is a
 # sandboxed document that runs no script and has an origin of its own -- a robot description's XML
 # can carry an XHTML <script>, which would otherwise run as the viewer, its routes and their guard
@@ -645,7 +652,20 @@ class CadApp:
     # --- placeholders filled by later steps of the port -------------------
 
     def _handle_catalog(self, request, response):
-        response.send_json(200, self.read_catalog(request.query.get("file")))
+        """The catalog, tagged with its revision.
+
+        The revision digests everything in the catalog that can change (its schema and the
+        root's identity are this server's own), so it is the catalog's entity tag. A client
+        that sends it back in ``If-None-Match`` is answered 304 with no body: the catalog is
+        read the same way, but nothing is sent or parsed again."""
+        catalog = self.read_catalog(request.query.get("file"))
+        tag = f'"{catalog["revision"]}"'
+        if if_none_match(request.header("if-none-match"), tag):
+            response.send_empty(304, [("etag", tag), ("cache-control", "no-store")])
+            return
+        # send_json's exact bytes, with the tag beside them.
+        body = json.dumps(catalog, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        response.send_bytes(200, body, "application/json; charset=utf-8", [("etag", tag)])
 
     def _entry_ref_for_status(self, file_ref, catalog=None) -> str:
         """The catalog URL for this ref, or ``""``.
