@@ -1011,9 +1011,13 @@ class StoreCli(StoreCase):
         self.assertIn("[ok] 2 closure", out)
 
     def test_gc_dry_run_removes_nothing(self) -> None:
-        from cadgen.store.objects import has_object, put_object
+        from cadgen.store.objects import has_object, object_path, put_object
 
         orphan = put_object(b"orphan")
+        # Older than the pass on any clock: a zero grace window must not hinge on time.time() and
+        # the file system agreeing about an object written just before it (test_store_gc_components).
+        then = time.time() - 3600
+        os.utime(object_path(orphan), (then, then))
         code, out = self.run_cli(["gc", "--dry-run", "--grace-hours", "0"])
         self.assertEqual(code, 0)
         self.assertIn("would remove 1 objects", out)
