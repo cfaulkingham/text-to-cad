@@ -155,6 +155,8 @@ def _watch_client(
     tool: str,
     worker,
     preserve_work=None,
+    *,
+    finishes_alone: bool = False,
 ) -> None:
     """Kill the WORKER when the requesting client vanishes mid-job.
 
@@ -165,6 +167,9 @@ def _watch_client(
 
     Killing the one worker leaves the supervisor and every other job alone; the pool
     binds a fresh worker to that model on its next request.
+
+    A job that ``finishes_alone`` (an artifact job, ``_handle_request``) is never killed
+    for its client: the worker finishes it and stays warm.
     """
     while not done.wait(CLIENT_LIVENESS_INTERVAL_SECONDS):
         try:
@@ -172,6 +177,9 @@ def _watch_client(
                 _send(conn, {"stream": "stdout", "data": ""})
         except OSError:
             if done.is_set():
+                return
+            if finishes_alone:
+                _log(f"{tool}: client left; worker {worker.pid} finishes the job into the store")
                 return
             if preserve_work is not None and preserve_work():
                 _log(f"{tool}: producer disconnected; continuing for coalesced consumers")
@@ -412,9 +420,19 @@ def _handle_request(conn: transport.Channel, request: dict) -> None:
     def preserve_coalesced_work() -> bool:
         return bool(inflight is not None and _BROKER.abandon(inflight))
 
+    # An artifact job outlives its client. It is a pure function of immutable pins that
+    # writes its result into the store, and the CAD Viewer cancels surface requests as a
+    # matter of course, so killing the worker threw away a warm kernel (a replacement
+    # imports it again, ~2.6 s) to save a derivation that takes a fraction of that. The
+    # worker finishes; the in-flight entry stays attachable until it does, so an identical
+    # request meanwhile attaches instead of deriving twice, and a later one reads the
+    # store. A model build or a door whose caller left is still killed: there a cancel
+    # means stop.
+    finishes_alone = is_artifact
     watchdog = threading.Thread(
         target=_watch_client,
         args=(conn, send_lock, watchdog_done, tool, worker, preserve_coalesced_work),
+        kwargs={"finishes_alone": finishes_alone},
         daemon=True,
     )
     watchdog.start()
@@ -462,7 +480,7 @@ def _handle_request(conn: transport.Channel, request: dict) -> None:
                     with send_lock:
                         _send(conn, frame)
                 except OSError:
-                    if preserve_coalesced_work():
+                    if finishes_alone or preserve_coalesced_work():
                         relay_connected = False
                     else:
                         raise

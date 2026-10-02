@@ -31,6 +31,14 @@ def surface_request(**changes):
     return request
 
 
+def wait_for(predicate, message):
+    deadline = time.monotonic() + 3
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError(message)
+        time.sleep(.005)
+
+
 class Connection:
     def __init__(self, frames=()):
         self.frames = []
@@ -236,6 +244,60 @@ class ArtifactCoalescing(unittest.TestCase):
 
     def test_producer_failure_is_not_hidden_by_an_earlier_result(self):
         self.exercise_relay(fail=True)
+
+    def test_a_cancelled_artifact_request_finishes_on_its_warm_worker(self):
+        # The CAD Viewer cancels surface requests as a matter of course. The derivation writes
+        # its result into the store, so the worker finishes it rather than being killed (a
+        # replacement imports the kernel again), and an identical request meanwhile attaches.
+        registry, ledger, pool = broker.Broker(1), JobLedger(), mock.Mock()
+        running = ResultWorker()
+        pool.acquire.return_value = running
+        request = {"tool": "artifact", "argv": [], "artifact": surface_request(), "store_root": "/store/a"}
+        cancelled, late = Connection(), Connection()
+        with mock.patch.object(server, "_BROKER", registry), mock.patch.object(server, "_JOBS", ledger), \
+             mock.patch.object(server, "_POOL", pool), mock.patch.object(server, "_log") as log, \
+             mock.patch.object(server, "CLIENT_LIVENESS_INTERVAL_SECONDS", .01), \
+             concurrent.futures.ThreadPoolExecutor(2) as executor:
+            owner = executor.submit(server._handle_request, cancelled, request)
+            self.assertTrue(running.ready.wait(3))
+            cancelled.disconnected.set()
+            wait_for(lambda: any(str(running.pid) in str(call.args[0]) for call in log.call_args_list),
+                          "the supervisor never noticed the client leave")
+            self.assertFalse(running.killed, "a cancelled artifact request killed its warm worker")
+            follower = executor.submit(server._handle_request, late, request)
+            wait_for(lambda: any("artifactResult" in frame for frame in late.frames),
+                          "an identical request did not attach to the job still running")
+            running.finish.set()
+            owner.result(5)
+            follower.result(5)
+        self.assertFalse(running.killed)
+        pool.acquire.assert_called_once_with("", dependency=False)
+        pool.release.assert_called_once_with(running, healthy=True)
+        self.assertEqual(late.frames[-1], {"exit": 0})
+        self.assertEqual(sorted(job["state"] for job in ledger.snapshot()), ["done", "done"])
+        self.assertEqual(registry.snapshot()["inflight"], 0)
+
+    def test_a_model_build_whose_client_left_is_still_stopped(self):
+        class BuildWorker(ResultWorker):
+            def frames(inner, **kwargs):
+                inner.ready.set()
+                if not inner.finish.wait(5):
+                    raise AssertionError("test did not release worker")
+                yield {"exit": 0}
+
+        ledger, pool, running = JobLedger(), mock.Mock(), BuildWorker()
+        pool.acquire.return_value = running
+        gone = Connection()
+        with mock.patch.object(server, "_JOBS", ledger), mock.patch.object(server, "_POOL", pool), \
+             mock.patch.object(server, "_log"), mock.patch.object(server, "CLIENT_LIVENESS_INTERVAL_SECONDS", .01), \
+             mock.patch("cadgen.daemon.jobs.declared_outputs", return_value=[]), \
+             concurrent.futures.ThreadPoolExecutor(1) as executor:
+            build = executor.submit(server._handle_request, gone, {"tool": "run", "argv": ["/project/model.py"]})
+            self.assertTrue(running.ready.wait(3))
+            gone.disconnected.set()
+            build.result(5)
+        self.assertTrue(running.killed, "a stopped build kept running")
+        pool.release.assert_called_once_with(running, healthy=False)
 
     def test_admission_failure_finishes_coalescing_without_starting_work(self):
         registry, ledger, pool = broker.Broker(1), JobLedger(), mock.Mock()
@@ -750,7 +812,7 @@ raise SystemExit(artifacts._main())
                 thread.start()
 
         with mock.patch.object(server, "_BROKER", self.private.broker), mock.patch.object(server, "_JOBS", ledger), \
-             mock.patch.object(server, "_POOL", pool), mock.patch.object(server, "_log"), \
+             mock.patch.object(server, "_POOL", pool), mock.patch.object(server, "_log") as log, \
              mock.patch.object(client, "_connect_or_spawn", side_effect=lambda _: transport.connect(address, self.private.key)), \
              mock.patch("cadgen.daemon.executors.use_daemon", return_value=True):
             acceptor = threading.Thread(target=serve_two, daemon=True)
@@ -766,10 +828,11 @@ raise SystemExit(artifacts._main())
             self.assertTrue(first.detach())
             with self.assertRaises(artifacts.ArtifactDetached):
                 first.result()
-            deadline = time.monotonic() + 3
-            while entry["ownerActive"] and time.monotonic() < deadline:
-                time.sleep(.005)
-            self.assertFalse(entry["ownerActive"])
+            # The supervisor notices its client leave, and the worker keeps the job: an
+            # artifact job always finishes (it writes the store), whoever is still waiting.
+            wait_for(lambda: any("client left" in str(call.args[0]) for call in log.call_args_list),
+                          "the supervisor never noticed the first subscriber leave")
+            self.assertTrue(entry["ownerActive"], "the producing request was abandoned")
             self.assertFalse(running.killed)
             running.finish.set()
             self.assertEqual(second.result(5), {"producer": PRODUCER})

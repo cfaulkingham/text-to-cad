@@ -1338,7 +1338,11 @@ Geometry publication no longer starts extraction subprocesses for native
 components. Surface requests use the shared artifact-job admission and one
 private derivation per requested component; they have no model binding,
 declared output or editing-producer order. Their time and memory remain real
-work, charged when a display or selector first requires them.
+work, charged when a display or selector first requires them. On the daemon,
+an artifact job runs to its end when its caller leaves, as the CAD Viewer's do
+routinely: its result lands in the store, an identical request attaches to it
+meanwhile, and the worker stays warm rather than being killed and replaced by a
+fresh kernel import. A build or a door whose caller leaves is stopped.
 
 **Browser resources.** Disposable decoded meshes, selectors, BVHs, GPU buffers,
 textures and worker work may have byte budgets and be reclaimed when unused.

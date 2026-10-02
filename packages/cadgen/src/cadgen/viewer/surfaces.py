@@ -2,7 +2,8 @@
 
 Tokens are disposable subscribers to pooled work, never persistent store
 entries or editing sessions. Every poll repeats and validates its immutable
-inputs. Disconnect/cancellation detaches that subscriber, not another reader.
+inputs. Disconnect/cancellation detaches that subscriber, not another reader,
+and never stops the derivation: the daemon finishes it into the store.
 """
 
 from __future__ import annotations
