@@ -33,6 +33,7 @@ import copy
 from collections import OrderedDict
 import json
 import math
+import os
 import threading
 import time
 from pathlib import Path
@@ -477,7 +478,24 @@ def _stamp(key: str, path: Path) -> tuple:
 
 
 def _object_stamp(digest: str) -> tuple:
-    return _stamp(digest, object_path(digest))
+    # Keyed by the object's path, as a string: a cache hit stats every object of a
+    # closure again, and spelling each path from its digest cost more than the stat.
+    path = object_path(digest)
+    return _stamp(str(path), path)
+
+
+def _stamps_hold(stamps: tuple) -> bool:
+    """Whether every file still has the fingerprint ``_object_stamp`` recorded for it."""
+    stat = os.stat
+    try:
+        for path, dev, ino, size, mtime_ns, ctime_ns in stamps:
+            found = stat(path)
+            if (found.st_mtime_ns != mtime_ns or found.st_size != size or found.st_ino != ino
+                    or found.st_ctime_ns != ctime_ns or found.st_dev != dev):
+                return False
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _timestamp_resolution_ns(mtime_ns: int) -> int:
@@ -507,17 +525,14 @@ def _metadata_capture_key(tree_hash: str) -> tuple[str, str]:
     return str(store_root().resolve()), str(tree_hash)
 
 
-def _metadata_capture_hit(key: tuple[str, str]) -> dict | None:
+def _metadata_capture_hit(key: tuple[str, str]) -> bytes | None:
+    """The cached metadata's JSON bytes while every object keeps its verified stamp."""
     with _METADATA_CAPTURE_CACHE_LOCK:
         cached = _METADATA_CAPTURE_CACHE.get(key)
     if cached is None:
         return None
     body, stamps, _weight = cached
-    try:
-        current = tuple(_object_stamp(stamp[0]) for stamp in stamps)
-    except (OSError, ValueError):
-        current = None
-    if current != stamps:
+    if not _stamps_hold(stamps):
         global _METADATA_CAPTURE_CACHE_SIZE
         with _METADATA_CAPTURE_CACHE_LOCK:
             if _METADATA_CAPTURE_CACHE.get(key) is cached:
@@ -527,7 +542,7 @@ def _metadata_capture_hit(key: tuple[str, str]) -> dict | None:
     with _METADATA_CAPTURE_CACHE_LOCK:
         if _METADATA_CAPTURE_CACHE.get(key) is cached:
             _METADATA_CAPTURE_CACHE.move_to_end(key)
-    return json.loads(body)
+    return body
 
 
 def _remember_metadata_capture(key: tuple[str, str], descriptor: dict, stamps: dict[str, tuple]) -> None:
@@ -603,10 +618,11 @@ def capture_tree(tree_hash: str, *, retain_payloads: bool = True) -> tuple[dict,
                 raise RuntimeError("metadata capture ended without a result")
             return json.loads(flight["body"]), {}
         try:
-            cached = _metadata_capture_hit(cache_key)
-            if cached is not None:
-                flight["body"] = json.dumps(cached, sort_keys=True, separators=(",", ":")).encode("utf-8")
-                return cached, {}
+            body = _metadata_capture_hit(cache_key)
+            if body is not None:
+                # Waiters parse the cached bytes themselves: nothing to dump again.
+                flight["body"] = body
+                return json.loads(body), {}
         except BaseException as error:
             flight["failure"] = (type(error), error.args)
             raise
