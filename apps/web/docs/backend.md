@@ -114,8 +114,8 @@ rules cover the stamps that fail to move:
   and `cp -p` restore a directory's mtime after filling it; APFS, HFS+ and ext4
   still move its ctime, but FAT and exFAT have no ctime of their own and Windows
   reports creation time in its place, so there the identity can repeat exactly
-  and the change shows within 10 s. The client polls every 2 s, so four polls in
-  five stay warm.
+  and the change shows within 10 s. The client polls every 2 s while its page is
+  seen, so four polls in five stay warm.
 
 The memo holds at most 65,536 directories, least recently walked dropped first,
 and forgets a directory — with everything under it — once it is gone. A file's

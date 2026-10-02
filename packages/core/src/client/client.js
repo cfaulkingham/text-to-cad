@@ -1,4 +1,4 @@
-import { requestViewerJson, ViewerRequestError } from "./request.js";
+import { requestViewerJson, requestViewerJsonIfChanged, ViewerRequestError } from "./request.js";
 import { retainSurfWorkerPool } from '../lib/surf/surfWorkerClient.js';
 import { retainGlbMeshWorker } from '../lib/render/glbMeshWorkerClient.js';
 import { retainStlMeshWorker } from '../lib/render/stlMeshWorkerClient.js';
@@ -53,6 +53,10 @@ export function createCadClient({ origin = '', workspaceId = '', fetch: fetchImp
   const activeFiles = new Map();
   let preferredFile = '';
   const pendingRefreshes = new Map();
+  // The catalog each `file` request was last answered with, under the entity tag it came with. A
+  // refresh sends the tag back (`If-None-Match`): a server that finds it current answers 304, and
+  // nothing is read or applied again. A server that sends no tag is read in full every time.
+  const revalidated = new Map();
   let tessellationCache = null;
   let server = null;
 
@@ -62,17 +66,20 @@ export function createCadClient({ origin = '', workspaceId = '', fetch: fetchImp
     for (const listener of listeners) listener();
   }
 
-  async function request(path, { signal, file = '', params = {}, method = 'GET', headers = {}, body, timeoutMs = 0, operation = 'request' } = {}) {
+  async function request(path, { signal, file = '', params = {}, method = 'GET', headers = {}, body, timeoutMs = 0, operation = 'request', revalidate = null } = {}) {
     if (disposed || signal?.aborted) throw abortError();
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
     signal?.addEventListener('abort', abort, { once: true });
     requests.add(controller);
     try {
-      const payload = await requestViewerJson(cadApiUrl(path, { origin, file, params }), {
+      // `revalidate` (the tag of the copy held, "" for none yet) answers with the conditional
+      // request's `{ notModified, etag, payload }` instead of the payload.
+      const send = revalidate === null ? requestViewerJson : requestViewerJsonIfChanged;
+      const payload = await send(cadApiUrl(path, { origin, file, params }), {
         method, headers, signal: controller.signal, cache: 'no-store',
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      }, operation, { timeoutMs, fetch: fetchImpl });
+      }, operation, { timeoutMs, fetch: fetchImpl, ...(revalidate === null ? {} : { etag: revalidate }) });
       if (disposed || controller.signal.aborted) throw abortError();
       return payload;
     } catch (error) {
@@ -86,16 +93,20 @@ export function createCadClient({ origin = '', workspaceId = '', fetch: fetchImp
     }
   }
 
+  // True when `catalog` is now the snapshot's listing; false for a late answer, which at most
+  // lends the snapshot the one entry it was asked for.
   function publishCatalog(catalog, { sequence = ++refreshSequence, file = '' } = {}) {
     let incoming = applyViewerOriginToEntries(catalog?.entries, origin);
+    let applied = true;
     if (sequence < publishedCatalogSequence) {
       // Two views can hydrate different files concurrently. A late response
       // cannot replace the newer directory listing, but its requested entry
       // is still useful if no newer response hydrated that same file.
       const selected = file && incoming.find((entry) => matchesFile(entry, file));
       if (!selected || selected.catalogPending || !snapshot.entries.some((entry) => entryKey(entry) === entryKey(selected))
-        || sequence < (entrySequences.get(entryKey(selected)) || 0)) return;
+        || sequence < (entrySequences.get(entryKey(selected)) || 0)) return false;
       incoming = snapshot.entries.map((entry) => entryKey(entry) === entryKey(selected) ? selected : entry);
+      applied = false;
     } else publishedCatalogSequence = sequence;
     const previous = new Map(snapshot.entries.map((entry) => [entryKey(entry), entry]));
     const entries = incoming.map((entry) => {
@@ -116,6 +127,7 @@ export function createCadClient({ origin = '', workspaceId = '', fetch: fetchImp
     if (changed || !snapshot.hydrated || snapshot.refreshing || snapshot.error || rootId !== snapshot.rootId || catalogRevision !== snapshot.catalogRevision) {
       publish({ entries: changed ? entries : snapshot.entries, rootId, hydrated: true, refreshing: false, error: '', catalogRevision });
     }
+    return applied;
   }
 
   async function refresh({ file = preferredFile, signal, markRefreshing = !snapshot.hydrated } = {}) {
@@ -125,8 +137,16 @@ export function createCadClient({ origin = '', workspaceId = '', fetch: fetchImp
     if (markRefreshing) publish({ refreshing: true, error: '' });
     const work = (async () => {
       try {
-        const catalog = await request('/__cad/catalog', { file, signal, timeoutMs: 10_000, operation: 'catalog' });
-        publishCatalog(catalog, { sequence, file });
+        const held = revalidated.get(file);
+        const answer = await request('/__cad/catalog', { file, signal, timeoutMs: 10_000, operation: 'catalog', revalidate: held?.etag || '' });
+        if (answer.notModified && held) {
+          // The catalog this file was last answered with is current: nothing changed to apply.
+          if (!snapshot.hydrated || snapshot.refreshing || snapshot.error) publish({ hydrated: true, refreshing: false, error: '' });
+          return held.catalog;
+        }
+        const catalog = answer.payload;
+        if (publishCatalog(catalog, { sequence, file }) && answer.etag) revalidated.set(file, { etag: answer.etag, catalog });
+        else revalidated.delete(file);
         return catalog;
       } catch (error) {
         if (!disposed && !signal?.aborted && error?.name !== 'AbortError' && sequence === refreshSequence) {
@@ -196,6 +216,7 @@ export function createCadClient({ origin = '', workspaceId = '', fetch: fetchImp
         const next = await request('/__cad/server', { signal, operation: 'server' });
         if (server && (server.identityToken !== next.identityToken || server.rootId !== next.rootId)) {
           resources.invalidate();
+          revalidated.clear();
           publish({});
         }
         server = next;
@@ -284,6 +305,7 @@ export function createCadClient({ origin = '', workspaceId = '', fetch: fetchImp
       for (const session of [...sessions]) session.dispose();
       tessellationCache?.dispose();
       pendingRefreshes.clear();
+      revalidated.clear();
       listeners.clear();
     }
   };
