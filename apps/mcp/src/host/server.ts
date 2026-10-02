@@ -1,5 +1,6 @@
 import type { CadEditingPreview } from '@text-to-cad/core/client';
 import type { LibraryModel } from '@text-to-cad/ui/library';
+import type { AnalyticsConsent, AnswerFrom } from '@text-to-cad/ui/consent';
 import type { Bridge, CallOptions, ToolResult } from './bridge';
 
 /**
@@ -49,6 +50,9 @@ export interface SyncReply {
   previews?: ({ file: string; error?: string } & CadEditingPreview)[];
 }
 
+/** Anonymous usage analytics (`cad_consent`): the shared card's and Settings toggle's state. */
+export type { AnalyticsConsent as Consent } from '@text-to-cad/ui/consent';
+
 export class ServerError extends Error {
   constructor(message: string) { super(message); this.name = 'ServerError'; }
 }
@@ -70,8 +74,8 @@ export function createServer(bridge: Pick<Bridge, 'callTool'>) {
     return (result.structuredContent || {}) as T;
   }
   return {
-    /** The newest release, as GitHub says it (the server asks at most every few hours), or null. */
-    release: () => call<{ latest: { version: string; url: string; newer: boolean } | null }>('cad_release').then(value => value.latest),
+    /** Whether to ask the person about anonymous analytics; with `share`, their answer (`cadgen/analytics.py`). */
+    consent: (share?: boolean, from?: AnswerFrom) => call<AnalyticsConsent>('cad_consent', share === undefined ? {} : { share, ...(from === 'card' ? { card: true } : {}) }),
     launch: (model: string) => call<{ launch: Launch }>('cad_launch', { model }).then(value => value.launch),
     pickModel: () => call<{ launch?: Launch; cancelled?: boolean }>('cad_pick_model', {}, { timeoutMs: 16 * 60_000 }),
     recents: (args: { action?: 'list' | 'pin' | 'unpin' | 'remove' | 'thumbnail'; path?: string; png?: string } = {}) =>

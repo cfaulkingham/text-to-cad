@@ -12,7 +12,8 @@ vi.mock('@text-to-cad/ui/cad-viewer', async original => {
   const { useEffect } = await import('react');
   return {
     ...await original<object>(),
-    CadViewer: (props: CadViewerProps) => { viewer.props = props; useEffect(() => { viewer.mounts += 1; }, []); return null; },
+    // The host's notice (the analytics card) drawn as the real viewer would once a model is on screen.
+    CadViewer: (props: CadViewerProps) => { viewer.props = props; useEffect(() => { viewer.mounts += 1; }, []); return props.notice ?? null; },
   };
 });
 
@@ -20,7 +21,7 @@ beforeEach(() => vi.stubGlobal('IntersectionObserver', class { observe() {} unob
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); viewer.props = null; viewer.mounts = 0; });
 
 /** A host frame and CAD's server, as the page reaches them. */
-function host(initial: HostContext, hostCapabilities: Record<string, unknown> = {}) {
+function host(initial: HostContext, hostCapabilities: Record<string, unknown> = {}, ask = false) {
   const listeners = new Set<(context: HostContext) => void>();
   let context = initial;
   const bridge = {
@@ -33,9 +34,9 @@ function host(initial: HostContext, hostCapabilities: Record<string, unknown> = 
   const server = {
     events: () => new Promise(() => {}), report: vi.fn(async () => ({})), reply: vi.fn(async () => ({})),
     recents: vi.fn(async () => []), thumbnails: vi.fn(async () => ({})), http: () => new Promise(() => {}),
-    release: vi.fn(async () => ({ version: '0.7.5', url: 'https://github.com/earthtojake/text-to-cad/releases/tag/v0.7.5', newer: true })),
     launch: vi.fn(async (model: string) => ({ ...home, page: 'viewer', model })), pickModel: vi.fn(async () => ({ cancelled: true })),
     reveal: vi.fn(async () => {}),
+    consent: vi.fn(async (share?: boolean) => ({ ask: share === undefined && ask, sharing: Boolean(share), policy: 'https://www.texttocad.dev/privacy-policy' })),
   };
   return { bridge, server };
 }
@@ -74,9 +75,8 @@ it('a model opened from the home is launched by the server and leads back to it;
   expect(bridge.request).toHaveBeenCalledWith('ui/open-link', { url: 'https://github.com/earthtojake/text-to-cad' });
   // Feedback and Report Issue open a new issue on the project's tracker, the same way.
   expect(viewer.props!.host.links!.issues).toBe('https://github.com/earthtojake/text-to-cad/issues/new');
-  // The newest release, asked of the server once: the links carry it to the update button.
-  expect(server.release).toHaveBeenCalledTimes(1);
-  expect(viewer.props!.host.links!.latest).toEqual({ version: '0.7.5', url: 'https://github.com/earthtojake/text-to-cad/releases/tag/v0.7.5', newer: true });
+  // No update button: the host updates CAD, and asks GitHub nothing for it.
+  expect(viewer.props!.host.links!.latest ?? null).toBeNull();
   const { perform, platform } = viewer.props!.host.fileActions!;
   // A file on its own, in no project: its path is its only one.
   expect([platform, Object.keys(perform!).sort()]).toEqual(['darwin', ['copy-path', 'reveal']]);
@@ -98,6 +98,8 @@ it('an inline host gets a card of a height it is told, which goes full size in p
     launch={{ ...home, surface: 'inline', explore: false, view: 'cad-1-a', order: { createdAt: 1, seq: 1 } }} />);
   expect(viewer.props!.host.environment.compact).toBe(true);
   expect(sized(bridge.notify)).toEqual([['ui/notifications/size-changed', { height: expect.any(Number) }]]);
+  // Its Full size button holds the top-right corner: the viewer's column there (the analytics card) starts below it.
+  expect((container.firstElementChild as HTMLElement).style.getPropertyValue('--cad-viewport-top-right-inset')).toBe('40px');
   act(() => (container.querySelector('[aria-label="Full size"]') as HTMLButtonElement).click());
   expect(bridge.request).toHaveBeenCalledWith('ui/request-display-mode', { mode: 'fullscreen' });
   act(() => bridge.change({ displayMode: 'fullscreen', safeAreaInsets: { bottom: 72 } }));
@@ -127,4 +129,64 @@ it('a Quick Edit queues into a tab host\'s composer always, into an inline host\
   expect(reach('inline', { message: { text: {} } })).toEqual(['unavailable', 'send', true]);
   // Codex declares model context only sometimes and always forwards it: a tab is never asked.
   expect(reach('tabs', { message: { text: {}, image: {} } })).toEqual(['composer', 'send', true]);
+});
+
+it('a hand-made install is asked once about analytics: nothing is shared before a yes, and either answer ends the question', async () => {
+  for (const choice of ['Allow', 'No thanks', 'Close']) {
+    const { bridge, server } = host({ displayMode: 'fullscreen' }, {}, true);
+    const { findByRole, queryByRole, getByText, getByRole } = render(<App bridge={bridge as any} server={server as any} launch={home} session={session} />);
+    // The card is the viewer's notice: asked once a model is on screen, top-right, Quick Edit under it.
+    await findByRole('dialog', { name: 'Allow Analytics' });
+    expect(viewer.props!.notice).toBeTruthy();
+    const policy = getByText('Privacy Policy') as HTMLAnchorElement;
+    expect([policy.href, policy.target]).toEqual(['https://www.texttocad.dev/privacy-policy', '_blank']);
+    await act(async () => policy.click());
+    expect(bridge.request).toHaveBeenCalledWith('ui/open-link', { url: 'https://www.texttocad.dev/privacy-policy' });
+    expect(server.consent).toHaveBeenCalledTimes(1);
+    await act(async () => (choice === 'Close' ? getByRole('button', { name: "Close and don't share" }) : getByText(choice)).click());
+    expect(server.consent).toHaveBeenLastCalledWith(choice === 'Allow', 'card');
+    expect(queryByRole('dialog', { name: 'Allow Analytics' })).toBeNull();
+    cleanup();
+  }
+  // The answer is Settings' Analytics toggle from then on, and the toggle changes it.
+  {
+    const { bridge, server } = host({ displayMode: 'fullscreen' }, {}, true);
+    const { findByRole, getByText } = render(<App bridge={bridge as any} server={server as any} launch={home} session={session} />);
+    await findByRole('dialog', { name: 'Allow Analytics' });
+    expect(viewer.props!.appSettings).toEqual([expect.objectContaining({ id: 'analytics', checked: false })]);
+    await act(async () => getByText('Allow').click());
+    expect(viewer.props!.appSettings![0].checked).toBe(true);
+    await act(async () => viewer.props!.appSettings![0].onCheckedChange(false));
+    expect(server.consent).toHaveBeenLastCalledWith(false, 'settings');
+    expect(viewer.props!.appSettings![0].checked).toBe(false);
+    cleanup();
+  }
+  // A person who already answered (or whose environment did) is never asked.
+  const { bridge, server } = host({ displayMode: 'fullscreen' });
+  const { queryByRole } = render(<App bridge={bridge as any} server={server as any} launch={home} session={session} />);
+  await act(async () => {});
+  expect(server.consent).toHaveBeenCalledTimes(1);
+  expect(queryByRole('dialog', { name: 'Allow Analytics' })).toBeNull();
+});
+
+it('an answer is never undone by a read sent just before it, and a choice the environment made is shown fixed', async () => {
+  const { bridge, server } = host({ displayMode: 'fullscreen' }, {}, true);
+  const policy = 'https://www.texttocad.dev/privacy-policy';
+  let releaseStaleRead: (value: unknown) => void = () => {};
+  const { findByRole, getByText, queryByRole } = render(<App bridge={bridge as any} server={server as any} launch={home} session={session} />);
+  await findByRole('dialog', { name: 'Allow Analytics' });
+  // The click's own focus sends a read that answers late, with the question still open.
+  server.consent.mockImplementationOnce(() => new Promise(resolve => { releaseStaleRead = resolve; }));
+  act(() => { window.dispatchEvent(new Event('focus')); });
+  await act(async () => getByText('Allow').click());
+  await act(async () => releaseStaleRead({ ask: true, sharing: false, policy }));
+  expect(queryByRole('dialog', { name: 'Allow Analytics' })).toBeNull();
+  expect(viewer.props!.appSettings![0].checked).toBe(true);
+  cleanup();
+  // DO_NOT_TRACK: the setting says so, and cannot be changed here.
+  const fixed = host({ displayMode: 'fullscreen' });
+  fixed.server.consent.mockImplementation(async () => ({ ask: false, sharing: false, reason: 'environment', policy }));
+  render(<App bridge={fixed.bridge as any} server={fixed.server as any} launch={home} session={session} />);
+  await act(async () => {});
+  expect(viewer.props!.appSettings![0]).toEqual(expect.objectContaining({ disabled: true, label: 'Share anonymous usage data (set by your environment)' }));
 });

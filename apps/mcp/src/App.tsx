@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { Maximize2 } from 'lucide-react';
 import type { ResourceRef } from '@text-to-cad/core/prompt';
-import type { ViewerLinks } from '@text-to-cad/ui/host';
+import { ConsentCard, useAnalyticsConsent } from '@text-to-cad/ui/consent';
 import { viewerLinks } from '@text-to-cad/ui/links';
 import { Button } from '@text-to-cad/ui/primitives/button';
 import { createTabStore, memoryTabRecord } from '@text-to-cad/ui/tab-store';
@@ -29,15 +29,6 @@ export function useHostContext(bridge: Pick<Bridge, 'hostContext' | 'onHostConte
 // A tab host's composer floats over the bottom of the page, its middle this far above the edge: the
 // viewer's playback bars sit on that same line (Codex: a 45px box, 17px up).
 const TAB_BOTTOM_CENTER = '40px';
-
-// How each host updates CAD, said in a line. Codex runs the plugin's pinned release: the
-// marketplace's update moves the pin, and the first start after a restart downloads that release.
-// Every other host starts the server through an unpinned `uvx --from cadgen`, which resolves the
-// newest release.
-const UPDATE: Record<Presentation, ViewerLinks['install']> = {
-  tabs: { message: "Update CAD from Codex's plugin marketplace, then restart Codex: its first start downloads the new release." },
-  inline: { message: 'Restart the app to update: CAD starts its newest release each time.' },
-};
 
 // What to do once this view's server has gone: the host started it, and only the host starts it again.
 const LOST: Record<Presentation, string> = {
@@ -76,11 +67,13 @@ function Frame({ bridge, context, insets, inline = false, expandable = true, bot
     </div>;
   }
   const expand = () => void bridge.request('ui/request-display-mode', { mode: 'fullscreen' }).catch(() => {});
-  return <div className="flex flex-col overflow-hidden" style={{ height }}>
+  const fullSize = expandable && context.availableDisplayModes?.includes('fullscreen') !== false;
+  // Its button holds the view's top-right corner: the viewer's column there (the analytics card) starts below it.
+  return <div className="flex flex-col overflow-hidden" style={{ height, ...(fullSize ? { '--cad-viewport-top-right-inset': '40px' } : {}) } as CSSProperties}>
     <div className="relative min-h-0 flex-1">
       {children}
       {overlay}
-      {expandable && context.availableDisplayModes?.includes('fullscreen') !== false
+      {fullSize
         ? <Button variant="secondary" size="icon-sm" className="absolute right-2 top-2 z-40 shadow-sm" aria-label="Full size" title="Full size" onClick={expand}>
           <Maximize2 aria-hidden="true" />
         </Button> : null}
@@ -172,13 +165,15 @@ export default function App({ bridge, server, launch: initial, presentation = 't
     return () => { lifetime.abort(); stop(); window.removeEventListener('pointerdown', touched, true); window.removeEventListener('focus', touched); };
   }, [bridge, sync, superseded]);
 
-  // The navbar's links: the same as every app's (X, Discord, GitHub and a new issue), followed through the host (a
-  // frame cannot open one itself), and how this host updates CAD.
-  // The newest release, asked once: an update shows as the blue download button, and nothing shows without one.
-  const [latest, setLatest] = useState<{ version: string; url: string; newer: boolean } | null>(null);
-  useEffect(() => { void server.release().then(setLatest, () => {}); }, [server]);
-  const links = useMemo(() => viewerLinks({ version, install: UPDATE[presentation], latest, open: url => bridge.request('ui/open-link', { url }).then(() => {}) }),
-    [bridge, presentation, latest]);
+  // Asked once, of everyone, unless their environment answered or no answer could be kept
+  // (`cadgen/analytics.py`): the card, and Settings' Analytics section after it.
+  const { consent, answer, appSettings } = useAnalyticsConsent(server.consent);
+  const openLink = (url: string) => void bridge.request('ui/open-link', { url }).catch(() => {});
+  // The navbar's links: the same as every app's (X, Discord, GitHub and a new issue), followed through the
+  // host (a frame cannot open one itself). No update button: the host updates CAD (a plugin directory
+  // by itself, an unpinned `uvx` on restart), and GitHub's newest release is often not yet what it serves.
+  const links = useMemo(() => viewerLinks({ version, open: url => bridge.request('ui/open-link', { url }).then(() => {}) }),
+    [bridge]);
   // A view opened on the home (the sidebar's) goes back to it; one opened on a model has no home.
   // The home's launch carried its library as it stood when the sidebar opened: going back reads it anew.
   const home = initial.page === 'home' ? { ...initial, recents: undefined } : null;
@@ -191,7 +186,9 @@ export default function App({ bridge, server, launch: initial, presentation = 't
   return <Frame bridge={bridge} context={context} insets={insets} inline={inline} bottomCenter={bottomCenter}
     overlay={lost ? <Banner message={LOST[presentation]} /> : null}>
     <ModelView key={rootKey(launch.root)} launch={launch} root={launch.root} sequence={showing.sequence} bridge={bridge} server={server}
-      tabStore={tabStore} live={live} links={links} colorScheme={colorScheme} platform={initial.platform || 'darwin'} reporter={reporter} sync={sync} compact={inline} chat={chat}
+      tabStore={tabStore} live={live} links={links} appSettings={appSettings}
+      notice={consent?.ask ? <ConsentCard policy={consent.policy} onAnswer={answer} onPolicy={openLink} /> : null}
+      colorScheme={colorScheme} platform={initial.platform || 'darwin'} reporter={reporter} sync={sync} compact={inline} chat={chat}
       onLaunch={show} onHome={goHome} />
   </Frame>;
 }

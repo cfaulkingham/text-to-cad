@@ -38,9 +38,9 @@ it('draws the navbar only when it has something to hold, and never for a view sh
   expect(screen.queryByRole('button', { name: 'File actions' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Show files' })).toBeNull();
   cleanup();
-  // The host's links: without an update, Feedback alone — a new issue titled "Feedback: ", for the person
-  // to finish, naming the version and the platform (X, Discord, GitHub and the version are the
-  // renderer's Settings' and the home's). It carries no label: the project has none for feedback.
+  // The host's links: without an update, Feedback — a new issue titled "Feedback: ", for the person
+  // to finish, naming the version and the platform (GitHub is under the home's wordmark; X, Discord
+  // and GitHub are in Settings' footer, the version in its header). It carries no label: the project has none for feedback.
   const linked = { ...host, links: viewerLinks({ version: 'v0.7.4' }), environment: { colorScheme: 'light', platform: 'darwin' } };
   open({ navigationPath: null, host: linked });
   await screen.findByText('shown');
@@ -51,10 +51,9 @@ it('draws the navbar only when it has something to hold, and never for a view sh
   expect(feedback.searchParams.has('labels')).toBe(false);
   expect(feedback.searchParams.get('body')).toMatch(/^\*\*What happened, or what would you like\?\*\*\n[\s\S]*- CAD: 0\.7\.4\n- Platform: darwin$/);
   cleanup();
-  // A host with no tracker: nothing of them.
+  // A host with no tracker: no Feedback, and no link at all.
   open({ navigationPath: null, host: { ...linked, links: viewerLinks({ version: '0.7.4', issues: '' }) } });
   await screen.findByText('shown');
-  expect(navbar()).not.toBeNull();
   expect(labels()).toEqual([]);
   cleanup();
   open({ host: { ...linked, environment: { colorScheme: 'light', compact: true } } });

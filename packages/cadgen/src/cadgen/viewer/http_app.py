@@ -73,7 +73,8 @@ TESS_CACHE_PROBE_PATH = "/__tess_cache/probe"
 # than doing work. Interrupting a parked poll costs the client one re-poll
 # after it reloads; interrupting a compile would cost a build, which is why
 # every other route, `POST /__cad/artifact` above all, is counted.
-_UNCOUNTED_ROUTES = frozenset({"/__cad/server", "/__cad/preview", "/__cad/surfaces", "/__cad/surfaces/cancel"})
+_UNCOUNTED_ROUTES = frozenset({"/__cad/server", "/__cad/preview", "/__cad/surfaces", "/__cad/surfaces/cancel",
+                               "/__cad/analytics", "/__cad/analytics/activity"})
 
 _PACKAGE_DIR = str(Path(__file__).resolve().parent)
 
@@ -223,6 +224,14 @@ def catalog_revision(entries) -> str:
     return hashlib.sha256(json.dumps(entries, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:24]
 
 
+# A project's files are served as data, never as pages. Opened straight in the browser, one is a
+# sandboxed document that runs no script and has an origin of its own -- a robot description's XML
+# can carry an XHTML <script>, which would otherwise run as the viewer, its routes and their guard
+# header in reach -- and ``nosniff`` keeps a browser from reading it as anything but its type. The
+# viewer's renderers fetch these bytes, and neither header applies to a fetch.
+RAW_FILE_HEADERS = (("x-content-type-options", "nosniff"), ("content-security-policy", "default-src 'none'; sandbox"))
+
+
 class CadApp:
     """``handle(request, response)`` writes exactly one response.
 
@@ -264,6 +273,10 @@ class CadApp:
         self.lock = threading.Lock()
         self.ops = create_cadgen_ops(root_path)
         self._recents = None
+        # Anonymous usage analytics (``cadgen/analytics.py``): the `cadgen viewer` process attaches
+        # its recorder here (``main.py``). An app the CAD app's tunnel builds gets none, and its
+        # page asks the CAD app's own server instead, so nothing is counted twice.
+        self.analytics = None
 
     # --- development auto-reload accounting -------------------------------
 
@@ -459,6 +472,8 @@ class CadApp:
                     self._handle_store_asset(request, response, query)
                 elif pathname == "/__cad/asset":
                     self._handle_asset(request, response, query)
+                elif pathname == "/__cad/analytics" and self.analytics is not None:
+                    response.send_json(200, self._consent())
                 else:
                     # An unrecognised /__cad/* path is a bad API call, not a
                     # page. Falling through to the SPA answered typo'd and
@@ -481,6 +496,18 @@ class CadApp:
             try:
                 if pathname == "/__cad/artifact":
                     self._handle_artifact_build(request, response, query)
+                elif pathname in ("/__cad/analytics", "/__cad/analytics/activity") and self.analytics is not None:
+                    if int(request.headers.get("content-length") or 0) > 4096:
+                        response.send_empty(413, [("connection", "close")])
+                        return
+                    payload = json.loads(request.body() or b"{}")
+                    if type(payload) is not dict:
+                        raise ValueError("an analytics request is an object")
+                    if pathname == "/__cad/analytics":
+                        response.send_json(200, self._consent(payload.get("share"), card=payload.get("card") is True))
+                    else:
+                        self._report_activity(payload)
+                        response.send_empty(204)
                 elif pathname == "/__cad/recents":
                     if int(request.headers.get("content-length") or 0) > _LIBRARY_BODY_LIMIT:
                         response.send_empty(413, [("connection", "close")])
@@ -588,6 +615,33 @@ class CadApp:
             raise ValueError(f"unknown library action {action!r}")
         response.send_json(200, {"ok": True})
 
+    # --- anonymous usage analytics -----------------------------------------
+
+    def _consent(self, share=None, *, card: bool = False) -> dict:
+        """The page's analytics card and Settings toggle: whether to ask (nothing chosen, and an answer
+        could be kept), whether sharing is on and why, and, from the person's click, their answer. A
+        card answers only an open question, so one still up in another view never undoes an answer
+        just given (``card``); the toggle changes it whenever."""
+        from cadgen.analytics import PRIVACY_URL
+
+        if isinstance(share, bool) and (not card or self.analytics.status()["reason"] == "unasked"):
+            self.analytics.choose(share, by="viewer")
+        found = self.analytics.status()
+        return {"ask": found["reason"] == "unasked", "sharing": found["sharing"], "reason": found["reason"],
+                "policy": PRIVACY_URL}
+
+    def _report_activity(self, payload: dict) -> None:
+        """What the page did: a person touched it (``touched``), or it shows a model (``file``, as the
+        catalog names it). Noted in memory, and sent only with consent, a file only as its code."""
+        if payload.get("touched") is True:
+            self.analytics.viewed()
+        ref = payload.get("file")
+        if isinstance(ref, str) and ref:
+            try:
+                self.analytics.opened(self._library_path(ref))
+            except (ValueError, ForbiddenAssetError):
+                pass  # not a model this viewer lists: nothing to count
+
     # --- placeholders filled by later steps of the port -------------------
 
     def _handle_catalog(self, request, response):
@@ -658,14 +712,14 @@ class CadApp:
             response.send_json(404, {"error": "Not found"})
             return
         if isinstance(payload, bytes):
-            response.send_bytes(200, payload, content_type)
+            response.send_bytes(200, payload, content_type, RAW_FILE_HEADERS)
             return
         try:
             stat_result = os.stat(payload)
         except (OSError, ValueError):
             response.send_json(404, {"error": "Not found"})
             return
-        response.stream_file(str(payload), stat_result, content_type)
+        response.stream_file(str(payload), stat_result, content_type, RAW_FILE_HEADERS)
 
     def _handle_drawing(self, request, response, query):
         """A ``.dxf`` flattened to 2D primitives (``drawings.py`` owns both rules).
@@ -698,7 +752,7 @@ class CadApp:
             response.send_json(404, {"error": "Not found"})
             return
         content_type = self.backend.content_type_for_path(candidate) or "application/octet-stream"
-        response.stream_file(candidate, stat_result, content_type)
+        response.stream_file(candidate, stat_result, content_type, RAW_FILE_HEADERS)
 
     def _handle_tess_get(self, request, response):
         """403 refused name, 404 miss, 200 hit.

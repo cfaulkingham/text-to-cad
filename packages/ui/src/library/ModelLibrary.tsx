@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ComponentType, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Box, FolderOpen, LayoutGrid, List, Pin, Search, X } from "lucide-react";
 import type { CadWorkspaceService } from "@text-to-cad/core/client";
 import { Button } from "../primitives/button.jsx";
 import { Input } from "../primitives/input.jsx";
-import { ScrollArea as ScrollRegion } from "../primitives/scroll-area.jsx";
 import { Spinner } from "../primitives/spinner.jsx";
 import type { LibraryLayout } from "../tab-store/tabRecord.js";
-import wordmark from "../assets/logo-cad.svg";
-import { CommunityLinks, FeedbackLink, UpdateButton } from "../file-viewer/navigation/NavbarLinks.jsx";
+import wordmark from "../assets/logo-texttocad.svg";
+import { FeedbackLink, GitHubLink, UpdateButton } from "../file-viewer/navigation/NavbarLinks.jsx";
+import { AppSettingsSections, SettingsPopover } from "../renderers/kit/shell/SettingsPopover.jsx";
+import type { AppSetting } from "../file-viewer/types.js";
 import type { ClipboardPort, ViewerLinks } from "../host/types.js";
 
 /** A model someone opened: kept by the host, which also says where it is shown from. */
@@ -88,7 +89,6 @@ const message = (failure: unknown) => failure instanceof Error ? failure.message
 /** How often the home reads its list again while it is up. */
 const LIST_MS = 2_000;
 // The chrome's one scroll region (`primitives/scroll-area.jsx`), as this page uses it.
-const ScrollArea = ScrollRegion as unknown as ComponentType<{ className?: string; style?: CSSProperties; viewportClassName?: string; children: ReactNode; [data: `data-${string}`]: string }>;
 
 // A card's picture, read once the card is on screen; and a card on screen that wants one (`seen`).
 function Thumbnail<Model extends LibraryModel>({ item, load, seen, opening = false }: { item: Model; load(name: string): Promise<string | null>; seen(item: Model): void; opening?: boolean }) {
@@ -138,9 +138,9 @@ function Placeholders({ layout }: { layout: LibraryLayout }) {
 
 /**
  * The host's home: the models opened before, from every view, to open again. It has no navbar
- * over it: the CAD wordmark is centred at its top over its byline and the host's links — its update, only when
- * there is one, then X, Discord, GitHub and Feedback — then "Recent Files" with its search, its grid/list switch and, where
- * the host has a chooser, Open; then the models, pinned first, as solid cards (a picture over the
+ * over it: the TEXTTOCAD wordmark is centred at its top over its byline and the host's links — its update, only when
+ * there is one, then GitHub, Feedback and Settings (the version, X and Discord, and the host's own settings) — then "Recent Files" with its search, its grid/list switch and, where
+ * the host has a chooser, Open, all three there with no models yet too; then the models, pinned first, as solid cards (a picture over the
  * name and when the file was edited) or as rows. A card can be pinned (its pin filled); a row can
  * also be removed. With none yet, one empty card opens the host's chooser. It is drawn on the
  * navbar's colour.
@@ -151,7 +151,7 @@ function Placeholders({ layout }: { layout: LibraryLayout }) {
  * (`wantsPicture`) is handed to `picture`, where the viewer draws one out of sight — one card at a
  * time, each once while the page is up — and the list is read again once one is kept.
  */
-export function ModelLibrary<Model extends LibraryModel>({ library, layout = "grid", onLayoutChange, failure = "", picture, links, platform, clipboard, onError }: {
+export function ModelLibrary<Model extends LibraryModel>({ library, layout = "grid", onLayoutChange, failure = "", picture, links, platform, clipboard, appSettings, onError }: {
   library: ModelLibrarySource<Model>;
   /** Grid or list; the host keeps the choice (the tab's settings). */
   layout?: LibraryLayout;
@@ -165,6 +165,8 @@ export function ModelLibrary<Model extends LibraryModel>({ library, layout = "gr
   /** The host's `environment.platform`, which Feedback's issue names. */
   platform?: string;
   clipboard?: ClipboardPort;
+  /** The host's own on/off settings, in the home's Settings. */
+  appSettings?: readonly AppSetting[];
   onError?(error: Error): void;
 }) {
   const [items, setItems] = useState<readonly Model[] | null>(null);
@@ -230,8 +232,8 @@ export function ModelLibrary<Model extends LibraryModel>({ library, layout = "gr
   const pick = library.pick ? () => { setError(""); void current.current.pick?.().catch(fail); } : null;
   const change = (action: "pin" | "unpin" | "remove", item: Model) => { void current.current.change(action, item).then(setItems, fail); };
   const all = items ?? [];
-  const searchQuery = all.length ? query : "";
   // The host lists pinned models first; a search keeps that order.
+  const searchQuery = query;
   const shown = filterModels(all, searchQuery);
   const now = Date.now();
   // A card pins; a row pins and removes.
@@ -259,23 +261,28 @@ export function ModelLibrary<Model extends LibraryModel>({ library, layout = "gr
       </button>
       {actions(item, false)}
     </li>)}</ul>;
-  return <ScrollArea className="cad-library h-full text-ui" viewportClassName="cad-library-viewport" data-library-layout={layout}>
+  // A page: it scrolls, with the platform's own scrollbar, only when there is more of it than fits.
+  return <div className="cad-library h-full overflow-y-auto text-ui" data-library-layout={layout}>
     <main className="cad-library-content" aria-label="CAD models">
-      <img className="cad-library-wordmark" src={wordmark} alt="CAD" />
+      <img className="cad-library-wordmark" src={wordmark} alt="text-to-cad" />
       <p className="cad-library-byline">Build anything. <span>100% open source and free.</span></p>
       {links ? <nav className="cad-library-links" aria-label="CAD links">
         {clipboard ? <UpdateButton links={links} clipboard={clipboard} onError={onError} align="center" /> : null}
-        <CommunityLinks links={links} onError={onError} />
+        <GitHubLink links={links} onError={onError} />
         <FeedbackLink links={links} platform={platform} onError={onError} />
+        <SettingsPopover links={links} align="center">
+          {appSettings?.length ? <AppSettingsSections appSettings={appSettings} /> : null}
+        </SettingsPopover>
       </nav> : null}
       <div className="cad-library-toolbar">
         <h1 className="cad-library-heading">Recent Files</h1>
         <div className="cad-library-controls">
-          {all.length > 0 ? <div className="cad-library-search">
+          {/* There with no models too: the toolbar keeps its shape from the first open to the hundredth. */}
+          <div className="cad-library-search">
             <Search aria-hidden="true" />
             <Input className="h-8" type="search" aria-label="Search models" placeholder="Search" value={query} onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)} />
-          </div> : null}
-          {all.length > 0 && onLayoutChange ? <div className="cad-library-layout" role="group" aria-label="Layout">
+          </div>
+          {onLayoutChange ? <div className="cad-library-layout" role="group" aria-label="Layout">
             <Button variant="ghost" size="icon-sm" aria-label="Grid" aria-pressed={layout === "grid"} onClick={() => onLayoutChange("grid")}><LayoutGrid aria-hidden="true" /></Button>
             <Button variant="ghost" size="icon-sm" aria-label="List" aria-pressed={layout === "list"} onClick={() => onLayoutChange("list")}><List aria-hidden="true" /></Button>
           </div> : null}
@@ -295,5 +302,5 @@ export function ModelLibrary<Model extends LibraryModel>({ library, layout = "gr
             : <p className="cad-library-empty">Open a CAD file to see it here.</p>)
             : models}
     </main>
-  </ScrollArea>;
+  </div>;
 }

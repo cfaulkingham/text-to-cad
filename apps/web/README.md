@@ -315,6 +315,20 @@ from the default direction, whatever the camera (`{action: "thumbnail"}`).
 `cadgen.viewer.recents` keeps the library in the user's state directory, shared with
 every other Viewer and the MCP app.
 
+### Anonymous usage analytics
+
+CAD's anonymous usage analytics (`cadgen/analytics.py`) are off until the person allows
+them, and the Viewer asks as the CAD app does: once a model is on screen, with the shared card
+(`@text-to-cad/ui/consent`, handed to `CadViewer` as `notice`) at the viewport's top-right and
+Quick Edit stacked under it, then **Share anonymous usage data** in Settings' Analytics
+section. The answer is kept in the user's state directory, so
+one answer counts for both apps. A "No thanks" or a closed card is never asked again, and
+where no answer could be kept the card never shows. `src/adapters/analytics.ts` reads and
+answers it through `/__cad/analytics`, and reports each file shown and a person touching
+the page (at most every 2 s) to `/__cad/analytics/activity`. The server holds those as
+counts and a code per file, in memory, and sends nothing without consent. Only the
+Viewer's own server serves the two routes.
+
 ### File storage and host actions
 
 The web `FileSource` is the served folder's read-only CAD catalog
@@ -347,13 +361,13 @@ The Viewer has the one navbar every app shares (see
 [the host contract](../../packages/ui/docs/viewer-host.md#host-chrome-slots)): at the
 left the explorer's toggle and the open file's name with its ⋯ ("Select file" with
 none open); at the right the update (a blue download button, only when GitHub has a
-newer release), Feedback (a new issue titled "Feedback: "), then the view's controls (Settings, Preview);
-the version, X, GitHub and Discord are in the Settings popover's header. This host
+newer release), GitHub, Feedback (a new issue titled "Feedback: "), then the view's controls (Settings, Preview);
+the version is beside the Settings popover's title, and its footer has "Made by @…" (X), Discord and GitHub. This host
 supplies the links (`src/host/viewerLinks.js`): its version, the GitHub (where new
 issues open) and Discord its build names (`VIEWER_GITHUB_URL`, `VIEWER_DISCORD_URL`),
 and what GitHub's latest-release API
-says, so the version reads "Update" when a newer release is out; links open in a new
-tab. Browser titles use "CAD | <filename>", or "CAD" when no file is selected.
+says, so the blue download button appears when a newer release is out; links open in a
+new tab. Browser titles use "CAD | <filename>", or "CAD" when no file is selected.
 Appearance is injected as an icon-bearing dropdown beside Projection in the Display
 panel's Display section, below the full-width Mode selector (`ViewerAppearance`,
 through `displayActions`). The original animated mark remains the shared LoadingIcon
