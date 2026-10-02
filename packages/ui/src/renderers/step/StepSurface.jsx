@@ -38,7 +38,7 @@ import { animationControlsHaveContent } from "../kit/tools/playbar/ViewportAnima
 import { useCadAssets } from "./components/workbench/hooks/useCadAssets.js";
 import { useEditingPreview } from "./components/workbench/hooks/useEditingPreview.js";
 import { useViewportQualityStatus } from "./components/workbench/hooks/useViewportQualityStatus.js";
-import { editingBuildActive, previewEntry } from "./workbench/editingPreview.js";
+import { editingBuildActive } from "./workbench/editingPreview.js";
 import MeasurePanel from "./components/workbench/MeasurePanel.jsx";
 import { useCadWorkspaceSelection } from "./components/workbench/hooks/useCadWorkspaceSelection.js";
 import { useCadWorkspaceSelectors } from "./components/workbench/hooks/useCadWorkspaceSelectors.js";
@@ -334,13 +334,10 @@ function StepSurfaceBody({ view, data }) {
   // catalog's path relative to this client's served root.
   const editingFile = liveEntry ? cadFileParamForEntry(liveEntry) : explicitFileParam;
   const editingAvailable = /\.st(?:ep|p)$/i.test(editingFile || "");
-  // The build feed: its status ("Updating model…", a failed build) and, from a build that composed
-  // the file's own tree before writing it, that tree. The view shows the saved file, or that tree.
+  // The build feed: status only ("Updating model…", a failed build). The view shows the saved file.
   const editingPreview = useEditingPreview(editingFile, { client,
     enabled: editingAvailable && !selectedCatalogPending,
   });
-  const previewTree = editingPreview.state.preview?.tree || "";
-  const previewUrl = editingPreview.state.preview?.url || "";
   // Unified render-artifact status for the selected entry: ready (render) | generating (loading) |
   // error (fatal). A missing/stale cache is not an issue — it just triggers a (re)build. Replaces
   // the per-entry step-source-status fetch, the mesh-stripping merge, and the build effect.
@@ -366,14 +363,14 @@ function StepSurfaceBody({ view, data }) {
   const selectedEntry = useMemo(
     () => {
       const base = !liveEntry || selectedArtifact.status === "compiled" || entryHasMesh(liveEntry)
-        ? previewEntry(liveEntry, previewTree ? { preview: { tree: previewTree, url: previewUrl } } : null)
+        ? liveEntry
         : entryWithoutRenderAssets(liveEntry);
       if (!base) {
         return base;
       }
       return referencePath ? { ...base, fileRefPrefix: referencePath } : base;
     },
-    [liveEntry, selectedArtifact.status, referencePath, previewTree, previewUrl]
+    [liveEntry, selectedArtifact.status, referencePath]
   );
   // This renderer is only ever handed a STEP (its `matches`, index.ts), keyed per file, and an
   // entry is always present: so every capability a STEP has (parts, topology, Measure, a

@@ -108,8 +108,7 @@ class Fixture(unittest.TestCase):
             links.append(extra)
         return bd.Compound(children=links, label="parent")
 
-    def build(self, shape, *, name="parent", force=False, documents=None, env=None, logger=None,
-              on_document_preview=None):
+    def build(self, shape, *, name="parent", force=False, documents=None, env=None, logger=None):
         from cadgen.store.build import build_tree_through_step
 
         resolver = (lambda: self.documents) if documents is None else (lambda: documents)
@@ -117,7 +116,6 @@ class Fixture(unittest.TestCase):
             return build_tree_through_step(
                 shape, self.root / f"{name}.step", root_name=name, force=force,
                 _internal_source_publication=True, child_documents=resolver, logger=logger,
-                on_document_preview=on_document_preview,
             )
 
     @staticmethod
@@ -152,32 +150,6 @@ class ComposedTreeTest(Fixture):
         for key in ("documentTree", "documentOccurrenceMap", "documentNodeMap", "documentAppearance"):
             self.assertEqual(stats[key], forced[key], key)
 
-    def test_the_saved_tree_is_announced_before_the_step_is_written(self):
-        from cadgen import step_export
-
-        announced, announced_at_write = [], []
-        write = step_export.export_build123d_step_file
-
-        def recording_write(*args, **kwargs):
-            announced_at_write.append(list(announced))
-            return write(*args, **kwargs)
-
-        with mock.patch.object(step_export, "export_build123d_step_file", side_effect=recording_write):
-            _, _, stats, _ = self.build(self.parent(), name="announced", on_document_preview=announced.append)
-        self.assertEqual(stats["documentReadback"], "composed")
-        self.assertEqual(announced, [stats["documentTree"]])
-        self.assertEqual(announced_at_write, [announced], "the tree is announced before the STEP is written")
-
-    def test_already_seen_bytes_bind_the_composed_tree_without_the_index(self):
-        from cadgen._internal import step_scene_package
-
-        _, _, first, step_hash = self.build(self.parent(), name="again")
-        with mock.patch.object(step_scene_package, "_lookup_document_readback",
-                               side_effect=AssertionError("the index was consulted")):
-            _, _, second, second_hash = self.build(self.parent(), name="again")
-        self.assertEqual(second_hash, step_hash)
-        self.assertEqual((second["documentReadback"], second["documentTree"]), ("composed", first["documentTree"]))
-
     def test_links_under_a_group_compose_the_group(self):
         _, _, stats, _ = self.build(self.parent(grouped=True), name="grouped")
         self.assertEqual(stats["documentReadback"], "composed")
@@ -206,10 +178,7 @@ class ComposedTreeTest(Fixture):
                     self.addCleanup(tree.write_bytes, payload)
                 name = label.replace(" ", "_")
                 logger = self.verbose_logger()
-                announced = []
-                _, _, stats, _ = self.build(shape, name=name, documents=documents, logger=logger,
-                                            on_document_preview=announced.append)
-                self.assertEqual(announced, [], "a parent that composes nothing announces nothing")
+                _, _, stats, _ = self.build(shape, name=name, documents=documents, logger=logger)
                 if label == "incomplete document tree":
                     tree.write_bytes(payload)
                 self.assertEqual(stats["documentReadback"], "parsed")
@@ -241,84 +210,6 @@ class ComposedTreeTest(Fixture):
         with mock.patch.object(composer, "compose_document_tree", side_effect=nudged):
             _, _, stats, _ = self.build(self.parent(), name="unchecked")
         self.assertEqual(stats["documentReadback"], "composed")
-
-
-class AnnouncementTest(unittest.TestCase):
-    """A build announces its composed tree only for a file that will have no sidecar: the
-    sidecar's kinematics, finishes and routines are bound to the STEP's bytes, which the
-    announcement precedes. A finish a child passes up gives the parent a sidecar too."""
-
-    CHILD = (
-        "from cadgen import step\nfrom cadgen import build123d as bd\n"
-        "@step(out='{name}.step', materials={materials!r})\n"
-        "def {name}():\n    block = bd.Box(10, 8, 6)\n    block.label = 'block'\n"
-        "    cap = bd.Pos(0, 0, 5) * bd.Box(6, 6, 4)\n    cap.label = 'cap'\n"
-        "    return bd.Compound(children=[block, cap], label='{name}')\n"
-    )
-    PARENT = (
-        "from cadgen import step\nfrom cadgen import build123d as bd\nfrom {child} import {child}\n"
-        "@step(out='{name}.step', animation={animation!r})\n"
-        "def {name}():\n"
-        "    return bd.Compound(children=[{child}(), bd.Pos(20, 0, 0) * {child}()], label='{name}')\n"
-        "if __name__ == '__main__':\n    {name}()\n"
-    )
-    FINISH = {"definitions": {"finish": {"name": "Finish", "roughness": 0.2}},
-              "assignments": [{"targets": ["#block"], "material": "finish"}]}
-    ANIMATION = "export const clips = { spin: { duration: 1, update() {} } };\n"
-
-    @classmethod
-    def setUpClass(cls):
-        cls.temp = generated_cad_directory(prefix="announced-")
-        cls.root = Path(cls.temp.name)
-        cls.env = mock.patch.dict(os.environ, {
-            "CADGEN_CACHE_DIR": str(cls.root / "store"), "CADGEN_DAEMON": "0", "CADGEN_JOBS": "1",
-        })
-        cls.env.start()
-        for child, materials in (("child", None), ("child_finished", cls.FINISH)):
-            (cls.root / f"{child}.py").write_text(cls.CHILD.format(name=child, materials=materials), encoding="utf-8")
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.env.stop()
-        cls.temp.cleanup()
-
-    def announced(self, parent, *, child="child", animation=None):
-        """The trees a parent's build announces, its saved file's tree, and whether it has a sidecar."""
-        import contextlib
-        import io
-
-        from cadgen.catalog import artifact_file_hash
-        from cadgen.cli._run_model import run_model_argv
-        from cadgen.daemon import executors
-        from cadgen.store.records import tree_for_document_hash
-
-        script = self.root / f"{parent}.py"
-        script.write_text(self.PARENT.format(name=parent, child=child, animation=animation), encoding="utf-8")
-        events = []
-        # The children are saved before the parent composes, so its first build announces.
-        executors.set_event_sink(events.append)
-        try:
-            with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(out):
-                self.assertEqual(run_model_argv([str(script)]), 0, out.getvalue())
-        finally:
-            executors.set_event_sink(None)
-        document = self.root / f"{parent}.step"
-        announced = [event["documentPreview"]["tree"] for event in events if "documentPreview" in event]
-        sidecar = document.with_name(document.name + ".json").is_file()
-        return announced, tree_for_document_hash(artifact_file_hash(document)), sidecar
-
-    def test_a_file_without_a_sidecar_announces_its_saved_tree(self):
-        announced, saved, sidecar = self.announced("parent")
-        self.assertFalse(sidecar)
-        self.assertEqual(announced, [saved])
-
-    def test_a_file_with_a_sidecar_announces_nothing(self):
-        for parent, declaration in (("parent_animated", {"animation": self.ANIMATION}),
-                                    ("parent_finished", {"child": "child_finished"})):
-            with self.subTest(parent):
-                announced, saved, sidecar = self.announced(parent, **declaration)
-                self.assertTrue(sidecar and saved)
-                self.assertEqual(announced, [])
 
 
 class PinnedChildDocumentsTest(unittest.TestCase):

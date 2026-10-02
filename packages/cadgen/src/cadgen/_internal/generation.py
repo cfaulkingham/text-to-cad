@@ -417,7 +417,7 @@ def _generate_part_outputs(
             from cadgen._internal.step_scene_mesh import scene_to_build123d_compound
 
             shape = scene_to_build123d_compound(scene)
-        from cadgen._internal.source_sidecar import remove_source_sidecar, sidecar_is_warranted, write_source_sidecar
+        from cadgen._internal.source_sidecar import remove_source_sidecar, write_source_sidecar
         from cadgen.store.build import build_tree_from_compound
         from cadgen.store.records import read_record, write_record
 
@@ -466,17 +466,7 @@ def _generate_part_outputs(
             finally:
                 shutil.rmtree(view_dir, ignore_errors=True)
 
-        # Whether the saved file will have a sidecar, known once the authored tree (with
-        # any finishes its children pass up) is; until then, assume it will.
-        declares_sidecar = True
-
         def publish_preview(result_hash: str, _tree: dict):
-            nonlocal declares_sidecar
-            declares_sidecar = sidecar_is_warranted({
-                "kinematics": getattr(scene, "kinematics", None),
-                "appearance": _tree.get("appearance"),
-                "animation": getattr(scene, "animation", None),
-            })
             if spec.source == "generated":
                 executors.emit_source_result(_model_for_spec(spec), result_hash)
             # The role, output path and progress belong to this request, never
@@ -495,20 +485,6 @@ def _generate_part_outputs(
             wait_children = getattr(scene, "wait_child_outputs", None)
             if wait_children is not None:
                 wait_children()
-
-        def publish_document_preview(document_hash: str):
-            # The saved document's own tree, composed before its STEP is written:
-            # the one tree a viewer may show while this build runs (STORE.md §9b).
-            # Not when the saved file will have a sidecar: its kinematics, finishes
-            # and routines are bound to the STEP's bytes, which this tree precedes.
-            if writes_step and executors.sink_installed() and not declares_sidecar:
-                executors.emit_event(executors.model_event(
-                    _model_for_spec(spec), "building", phase="Saving STEP",
-                    documentPreview={
-                        "output": str(spec.step_path.expanduser().resolve()), "tree": document_hash,
-                        **({"surfaceProducer": surface_producer} if surface_producer is not None else {}),
-                    },
-                ))
         # Objects first: components + tree. Harmless if this build ends up not
         # publishing its record (publish rule below) — content-addressed and GC'd.
         writes_step = generated and bool(spec.step_output)
@@ -542,7 +518,6 @@ def _generate_part_outputs(
                     materials=getattr(scene, "materials", None),
                     child_documents=lambda: _pinned_child_documents(scene),
                     kept_document=lambda digest: _kept_document(spec, digest, expected_document_pair),
-                    on_document_preview=publish_document_preview,
                 )
             if stats.get("documentKept"):
                 logger.debug(f"kept {_display_path(spec.step_path)}: its writer input is unchanged")

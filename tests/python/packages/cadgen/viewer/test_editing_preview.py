@@ -1,5 +1,4 @@
-"""The build feed reports what a build of a STEP file is doing inside its root, and names no geometry
-but the saved file's own tree, composed before the file was written."""
+"""The build feed reports what a build of a STEP file is doing, never geometry, inside its root."""
 from __future__ import annotations
 
 import os
@@ -34,43 +33,6 @@ class BuildStatusTests(unittest.TestCase):
         self.assertEqual((result["state"], result["phase"], result["file"]), ("building", "tessellating", "new.step"))
         for private in ("subject", "storeRoot", "preview", "saved", "previewUnavailable", "superseded"):
             self.assertNotIn(private, result)
-
-    def test_the_saved_files_tree_composed_before_the_write_is_named_only_while_it_is_the_news(self):
-        from cadgen.catalog import artifact_file_hash
-
-        tree, other = "d" * 64, "e" * 64
-        announced = {self.output: {"tree": tree}}
-        authored = {self.output: {"tree": "a" * 64}}
-        named = {"tree": tree, "url": f"/__cad/store?file={tree}"}
-        running = preview_status(str(self.root), self.output, jobs=[self.job(
-            previews=authored, documentPreviews=announced)])
-        self.assertEqual(running["preview"], named)
-        # An authored preview alone is never named.
-        self.assertNotIn("preview", preview_status(str(self.root), self.output, jobs=[self.job(previews=authored)]))
-        # The build's attested surface producer rides the URL, as a saved document's index entry supplies it.
-        from cadgen.store.surfaces import EXTRACTION_SCHEME, SURF_FORMAT
-
-        producer = {"scheme": EXTRACTION_SCHEME, "surfFormat": SURF_FORMAT, "build123d": "0.9",
-                    "ocp": "7.8.1", "cadqueryOcp": "7.8.1"}
-        attested = preview_status(str(self.root), self.output, jobs=[self.job(
-            documentPreviews={self.output: {"tree": tree, "surfaceProducer": producer}})])
-        self.assertTrue(attested["preview"]["url"].startswith(f"/__cad/store?file={tree}&surfaceProducer="))
-
-        Path(self.output).write_bytes(b"ISO-10303-21; saved\n")
-        on_disk = artifact_file_hash(Path(self.output))
-
-        def finished(state, saved_tree):
-            return preview_status(str(self.root), self.output, jobs=[self.job(
-                state=state, finishedAt=1.0, documentPreviews=announced,
-                savedResults={self.output: {"tree": saved_tree, "documentHash": on_disk}})])
-
-        self.assertEqual(finished("done", tree)["preview"], named)
-        self.assertNotIn("preview", finished("done", other), "its save read back another tree")
-        self.assertNotIn("preview", finished("failed", tree))
-        Path(self.output).write_bytes(b"ISO-10303-21; written since\n")
-        superseded = finished("done", tree)
-        self.assertTrue(superseded["superseded"])
-        self.assertNotIn("preview", superseded)
 
     def test_changed_feed_uses_its_atomic_job_snapshot_and_only_exposes_cursor(self):
         payload = {"jobsCursor": "epoch:8", "jobs": [self.job()]}

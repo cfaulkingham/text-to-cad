@@ -306,26 +306,28 @@ def composed_bounds(occurrences: list[dict[str, Any]], components: Mapping[str, 
     }
 
 
-def compose_document(
+def compose_document_readback(
     *,
     walk: Any,
     descriptor: Mapping[str, Any],
+    step_path: Any,
+    step_hash: str,
     root_name: str,
     child_documents: Callable[[], Mapping[str, str]],
     logger: Any | None = None,
-) -> str | None:
-    """Publish the canonical document tree the STEP of ``walk`` compiles to,
-    composed from the children's document trees, and return its hash -- or
-    None when the ordinary read-back must build it.
+) -> Any | None:
+    """A private canonical read-back of the STEP at ``step_path`` composed from
+    the children's document trees, or None when the ordinary parse must run.
 
-    It needs no STEP bytes, so a build composes it before writing the file and
-    may announce it as the saved document's own tree (STORE.md §9b); the
-    read-back binds it to the bytes once they are written
-    (:func:`bind_composed_readback`).
+    The composed tree is published as an object first, then captured and
+    verified exactly as an indexed read-back of already-seen bytes is
+    (``_readback_from_document_tree``), so everything downstream — the
+    correspondence check, the canonical maps, the restore — is the same code.
     """
     from OCP.Standard import Standard_Failure
 
     from cadgen._internal.component_package import NativeUnavailable
+    from cadgen._internal.step_scene_package import _readback_from_document_tree
     from cadgen.store.trees import put_tree
 
     try:
@@ -333,6 +335,7 @@ def compose_document(
             walk=walk, descriptor=descriptor, root_name=root_name, child_documents=child_documents(),
         )
         tree_hash = put_tree(tree, repair=True)
+        readback = _readback_from_document_tree(step_path, step_hash=step_hash, tree_hash=tree_hash, lazy=True)
     except Ineligible as reason:
         if logger is not None:
             logger.debug(f"document composed from children: no ({reason})")
@@ -342,30 +345,8 @@ def compose_document(
         if logger is not None:
             logger.debug(f"document composed from children: no ({type(error).__name__}: {error})")
         return None
+    if readback is None:
+        return None
     if logger is not None:
         logger.debug(f"document composed from children: {len(walk.links)} links, {len(tree['occurrences'])} occurrences")
-    return tree_hash
-
-
-def bind_composed_readback(*, step_path: Any, step_hash: str, tree_hash: str, logger: Any | None = None) -> Any | None:
-    """A private canonical read-back of the bytes just written at ``step_path``
-    from the composed tree ``tree_hash``, or None when the ordinary read-back
-    must run.
-
-    The tree is captured and verified exactly as an indexed read-back of
-    already-seen bytes is (``_readback_from_document_tree``), so everything
-    downstream -- the correspondence check, the canonical maps, the restore --
-    is the same code.
-    """
-    from OCP.Standard import Standard_Failure
-
-    from cadgen._internal.component_package import NativeUnavailable
-    from cadgen._internal.step_scene_package import _readback_from_document_tree
-
-    try:
-        return _readback_from_document_tree(step_path, step_hash=step_hash, tree_hash=tree_hash, lazy=True)
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError, NativeUnavailable,
-            Standard_Failure) as error:
-        if logger is not None:
-            logger.debug(f"document composed from children: unbound ({type(error).__name__}: {error})")
-        return None
+    return readback

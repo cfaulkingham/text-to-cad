@@ -249,13 +249,12 @@ class JobLedger:
             result = event.get("sourceResult")
             if isinstance(result, dict) and result.get("model") and result.get("tree"):
                 job.setdefault("sourceResults", {}).setdefault(str(result["model"]), copy.deepcopy(result))
-            for field, ledger in (("preview", "previews"), ("saved", "savedResults"),
-                                  ("documentPreview", "documentPreviews")):
+            for field in ("preview", "saved"):
                 payload = event.get(field)
                 if not isinstance(payload, dict) or not payload.get("output") or not payload.get("tree"):
                     continue
                 output = _real(str(payload["output"]))
-                updates = job.setdefault(ledger, {})
+                updates = job.setdefault("previews" if field == "preview" else "savedResults", {})
                 ordinal = int(event.get("sequence") or 0)
                 previous = updates.get(output)
                 if previous is None or ordinal > int(previous.get("sequence") or 0):

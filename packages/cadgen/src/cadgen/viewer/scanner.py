@@ -299,8 +299,8 @@ def catalog_input_fingerprint(source_path) -> tuple:
     return source_path, _stat_identity(source_path), related
 
 
-def _store_asset_url(tree: str, *, producer: dict | None = None) -> str:
-    """``/__cad/store?file=<tree>``, and ``&surfaceProducer=`` when the view's producer is known.
+def _store_asset_url(tree: str) -> str:
+    """``/__cad/store?file=<tree>``.
 
     The tree hash stands where a directory used to: the client's
     ``resolvePackageAssetUrl`` appends ``/assembly.json`` and
@@ -308,32 +308,8 @@ def _store_asset_url(tree: str, *, producer: dict | None = None) -> str:
     resolves both by hash. The value carries NO leading slash (the route strips
     them, but the catalog must not emit one). No ``?v=`` token: a tree is
     content-addressed, so its hash IS the version.
-
-    A view is its tree read by one surface producer, so naming the producer
-    makes the URL that view's own: the build feed's early tree and the saved
-    file it becomes are one URL, which every client cache already holds
-    (STORE.md §9b). Both callers spell it here, in the same canonical JSON.
     """
-    url = f"/__cad/store?file={encode_uri_component(tree)}"
-    if producer is not None:
-        from urllib.parse import urlencode
-
-        url += "&" + urlencode({"surfaceProducer": json.dumps(producer, sort_keys=True, separators=(",", ":"))})
-    return url
-
-
-def _attested_producer(document_hash: str, tree: str) -> dict | None:
-    """The surface producer the saved document's index entry attests for ``tree``, or None."""
-    from cadgen.store.records import document_entry_for_hash
-    from cadgen.store.surfaces import producer_fields
-
-    entry = document_entry_for_hash(document_hash)
-    if not entry or entry.get("tree") != tree or entry.get("surfaceProducer") is None:
-        return None
-    try:
-        return producer_fields(entry["surfaceProducer"])
-    except (ValueError, TypeError):
-        return None
+    return f"/__cad/store?file={encode_uri_component(tree)}"
 
 
 def asset_for_path(repo_root, file_path) -> dict | None:
@@ -852,7 +828,6 @@ def _build_step_entry(
     metadata = read_step_catalog_metadata(
         descriptor, source_path, document_hash=document_hash
     )
-    producer = _attested_producer(document_hash, tree) if document_hash and tree and metadata else None
     topology = metadata.get("topology")
     descriptor_body = json.dumps(descriptor) if metadata else ""
     # An EMPTY `kinematics: {}` block still yields a poseUrl (JS truthiness);
@@ -862,12 +837,9 @@ def _build_step_entry(
         "file": repo_relative_path(root_path, source_path),
         "kind": step_kind_from_topology(topology),
         # The tree hash identifies the render; an unbuilt document still gets a
-        # deterministic URL the store route answers 404 for. A document whose
-        # index entry attests its surface producer is named by that producer, as
-        # its build's feed named it before the file was written; any other names
-        # its bytes, from which the route selects the producer.
-        "url": _store_asset_url(tree or f"unbuilt-{artifact_path_key(source_path)}", producer=producer) + (
-            f"&documentHash={document_hash}" if document_hash and tree and producer is None else ""
+        # deterministic URL the store route answers 404 for.
+        "url": _store_asset_url(tree or f"unbuilt-{artifact_path_key(source_path)}") + (
+            f"&documentHash={document_hash}" if document_hash and tree else ""
         ),
         "hash": tree if metadata else "",
         "documentHash": document_hash,

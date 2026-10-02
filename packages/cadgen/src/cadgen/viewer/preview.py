@@ -1,16 +1,10 @@
-"""What a build of a STEP file is doing, for the viewer's status.
+"""What a build of a STEP file is doing, for the viewer's status: never geometry.
 
 The viewer always shows the saved file (STORE.md 9b). This read-only adapter matches the
 daemon's jobs to the file's output path and store and reports the newest: whether it is queued
 or running, how far it has got, whether it failed and why -- and, once it has finished, whether
 the file moved past it (``superseded``), when its failure is no longer the news. A daemon
 restart expires this channel; the catalog keeps serving the bytes on disk.
-
-The one geometry it names is the saved file's own: a build that composed its document tree
-before writing the STEP announces that tree, which is the catalog's tree for the file once it
-is written. ``preview`` carries its hash and store URL while the build runs, and after it
-finishes only while the file is the one it saved with that tree -- never an authored tree, and
-never by a build that writes a sidecar, whose declarations are bound to the bytes it precedes.
 """
 
 from __future__ import annotations
@@ -22,7 +16,7 @@ from pathlib import Path
 from cadgen.store.paths import store_root
 
 from .backend import normalized_file_ref, require_contained
-from .build_progress import _RUNNING, _daemon_jobs
+from .build_progress import _daemon_jobs
 
 
 def _preview_target(root_path: str, file_ref: str, *, lazy: bool = False) -> str:
@@ -88,40 +82,7 @@ def preview_status(root_path: str, file_ref: str, *, jobs: list[dict] | None = N
         # its daemon has gone; a checkout; a STEP written by hand. Its failure is no longer the news.
         result["superseded"] = True
         result["error"] = None
-        return result
-    preview = _document_preview(latest, target)
-    if preview is not None:
-        result["preview"] = preview
     return result
-
-
-def _document_preview(job: dict, target: str) -> dict | None:
-    """The saved document's tree ``job`` announced for ``target`` before writing it, while that is
-    still the news: the build is running, or it saved exactly that tree (a failed build, or one
-    whose save read back another tree, shows the catalog). Its URL names the build's attested
-    surface producer, as a saved document's index entry does, so the view's surfaces are the ones
-    the saved file's view selects."""
-    announced = (job.get("documentPreviews") or {}).get(target)
-    tree = announced.get("tree") if isinstance(announced, dict) else None
-    if not isinstance(tree, str) or not tree:
-        return None
-    saved = (job.get("savedResults") or {}).get(target)
-    if job.get("state") not in _RUNNING and not (
-        job.get("state") == "done" and isinstance(saved, dict) and saved.get("tree") == tree
-    ):
-        return None
-    from .scanner import _store_asset_url
-
-    producer = None
-    if announced.get("surfaceProducer") is not None:
-        from cadgen.store.surfaces import producer_fields
-
-        try:
-            producer = producer_fields(announced["surfaceProducer"])
-        except (ValueError, TypeError):
-            producer = None
-    # The catalog's URL for the file once its build has saved it (scanner._store_asset_url).
-    return {"tree": tree, "url": _store_asset_url(tree, producer=producer)}
 
 
 def _superseded(job: dict, target: str) -> bool:
