@@ -1130,7 +1130,10 @@ to Select first. No other tool ever sees a selection, so none needs a rule for o
 
 ### Position
 
-Position edits persist when switching tools or tabs, or closing the panel. Reset
+Position edits persist when switching tools or tabs, or closing the panel. A STEP
+rebuild keeps them, and keeps Position the tool: the sidecar it writes again is read
+behind the kinematics in hand (`workbench/useStepMotion.js`), and Position goes only
+when that sidecar has nothing left to move. Reset
 explicitly restores STEP defaults or the robot opening pose (including SRDF `home`).
 The Position tool controls joint handles and shows its panel.
 A routine playing in preview sets the Position values aside when it takes the pose and gives them

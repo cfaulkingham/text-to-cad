@@ -1531,6 +1531,8 @@ function StepSurfaceBody({ view, data }) {
   shellRef.current = shell;
   const reportActionError = shell.reportActionError;
 
+  // Position is put down once the file has nothing left to move. A rebuild is not that: its
+  // sidecar is read behind the kinematics in hand (`useStepMotion`), so the tool survives it.
   useEffect(() => {
     if (!poseAvailable && shellRef.current?.toolMode === TAB_TOOL_MODE.POSE) shellRef.current.selectTool(TAB_TOOL_MODE.REFERENCES);
   }, [poseAvailable]);
