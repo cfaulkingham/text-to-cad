@@ -1026,6 +1026,111 @@ def _normalize_negative_zero_reals_in_file(path: Path) -> bool:
     return True
 
 
+# OCCT's STEP reader ends a string literal at an escaped quote ('') followed by spaces and ','
+# or ')'. A name such as "post (6')" or "x('',y)" then loses its product or comes back renamed,
+# in every OCCT-based reader, and the build's own read-back fails. Such a literal is written
+# with Part 21's \X\27 for each quote instead, which every reader decodes to the same name.
+# Every other literal keeps OCCT's spelling.
+_MISREAD_QUOTE = re.compile(rb"''[ ]*[,)]")
+
+
+def step_string_literal(text: bytes) -> bytes:
+    """``text`` as a STEP string parameter: quotes and backslashes doubled, as OCCT's writer
+    spells them, with every quote written \\X\\27 where OCCT's reader would misread the
+    doubling."""
+    body = text.replace(b"\\", b"\\\\").replace(b"'", b"''")
+    if _MISREAD_QUOTE.search(body):
+        body = body.replace(b"''", b"\\X\\27")
+    return b"'" + body + b"'"
+
+
+# The records that carry the names cadgen writes: products and their occurrences.
+_NAMED_RECORDS = (b" = PRODUCT(", b" = NEXT_ASSEMBLY_USAGE_OCCURRENCE(")
+
+
+# _MISREAD_QUOTE before the quotes are doubled: a quote, spaces, then ',' or ')'.
+_MISREAD_NAME = re.compile(r"'[ ]*[,)]")
+
+
+def _has_misread_name(model: Any) -> bool:
+    """Whether OCCT's reader would misread the name of any product or occurrence in
+    ``model``: almost never, so a file is read again only when one would. A product's id is
+    its name, an occurrence's is its number, and their descriptions are empty. About 4 µs a
+    record."""
+    from OCP.StepBasic import StepBasic_Product
+    from OCP.StepRepr import StepRepr_NextAssemblyUsageOccurrence
+
+    for kind in (StepBasic_Product, StepRepr_NextAssemblyUsageOccurrence):
+        iterator = model.Entities()
+        iterator.SelectType(kind.get_type_descriptor_s(), True)
+        iterator.Start()
+        while iterator.More():
+            name = iterator.Value().Name()
+            if name is not None:
+                text = name.ToCString()
+                if "'" in text and _MISREAD_NAME.search(text):
+                    return True
+            iterator.Next()
+    return False
+
+
+def _respell_misread_literals(record: bytes) -> bytes:
+    """``record`` with each string literal OCCT's reader would misread written with \\X\\27
+    quotes. OCCT wraps a long literal at a space, and a reader drops those line breaks, so
+    they are dropped here too before the literal is judged."""
+    parts, cursor, position = [], 0, record.find(b"'")
+    while position >= 0:
+        end = position + 1
+        while True:
+            end = record.index(b"'", end)
+            if record[end + 1:end + 2] != b"'":
+                break
+            end += 2
+        body = record[position + 1:end].replace(b"\r", b"").replace(b"\n", b"")
+        if _MISREAD_QUOTE.search(body):
+            parts += [record[cursor:position], b"'" + body.replace(b"''", b"\\X\\27") + b"'"]
+            cursor = end + 1
+        position = record.find(b"'", end + 1)
+    parts.append(record[cursor:])
+    return b"".join(parts)
+
+
+def _record_end(data: bytes, start: int) -> int:
+    """The offset just past the ';' that ends the record running from ``start``."""
+    quoted = False
+    for offset in range(start, len(data)):
+        byte = data[offset]
+        if byte == 0x27:
+            quoted = not quoted
+        elif byte == 0x3B and not quoted:
+            return offset + 1
+    raise ValueError("a record does not end")
+
+
+def _respell_misread_names_in_file(path: Path) -> None:
+    """Rewrite the header's FILE_NAME, which names the root product, and every product and
+    occurrence record with :func:`_respell_misread_literals`."""
+    data = read_bytes_with_ladder(path)
+    starts = [data.find(b"FILE_NAME(", 0, data.find(b"\nDATA;"))]
+    for keyword in _NAMED_RECORDS:
+        found = data.find(keyword)
+        while found >= 0:
+            line = data.rfind(b"\n", 0, found) + 1
+            if data[line:line + 1] == b"#" and data[line + 1:found].isdigit():
+                starts.append(line)
+            found = data.find(keyword, found + len(keyword))
+    parts, cursor = [], 0
+    for start in sorted(starts):
+        # A header-like line inside an earlier record's literal is not a record.
+        if start < cursor:
+            continue
+        end = _record_end(data, start)
+        parts += [data[cursor:start], _respell_misread_literals(data[start:end])]
+        cursor = end
+    parts.append(data[cursor:])
+    write_bytes_atomic(path, b"".join(parts))
+
+
 def write_xcaf_doc_step_file(
     doc: Any,
     output_path: Path,
@@ -1077,6 +1182,7 @@ def write_xcaf_doc_step_file(
     # deterministic transfer order) so identical models write identical bytes.
     with (logger.timed("renumber NAUO ids") if logger is not None else nullcontext()):
         _renumber_nauo_ids(writer.Writer().Model())
+    misread_names = _has_misread_name(writer.Writer().Model())
     # Same contract, other direction: OCCT appends multi-product style graphs
     # in heap-address order. Reorder them into content order.
     #
@@ -1177,6 +1283,9 @@ def write_xcaf_doc_step_file(
     # applier above addresses the file by offsets.
     with (logger.timed("normalize negative zero reals") if logger is not None else nullcontext()):
         _normalize_negative_zero_reals_in_file(output_path)
+    # Names OCCT's own reader would misread (``_MISREAD_QUOTE``). Last: it lengthens the text.
+    if misread_names:
+        _respell_misread_names_in_file(output_path)
     replace_atomic(output_path, final_path)
     return step_file_hash(final_path)
 

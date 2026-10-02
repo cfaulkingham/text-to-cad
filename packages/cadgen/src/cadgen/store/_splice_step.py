@@ -114,12 +114,16 @@ def _occt_real(value: float) -> bytes:
 
 
 def _quote(text: str) -> bytes:
-    """A name as OCCT's writer spells it: quotes doubled, and the UTF-8 bytes re-encoded as if
-    they were Latin-1, which the reader's mojibake repair undoes. A backslash or a control
-    character takes the writer's escape directives, which this does not emulate."""
+    """A name as cadgen's writer spells it. The UTF-8 bytes are re-encoded as if they were
+    Latin-1, which the reader's mojibake repair undoes, then quoted as
+    ``step_export.step_string_literal`` quotes them: as OCCT does, except a quote OCCT's reader
+    would misread. A backslash or a control character takes the writer's escape directives,
+    which this does not emulate."""
+    from cadgen.step_export import step_string_literal
+
     if "\\" in text or any(ord(char) < 0x20 or ord(char) == 0x7F for char in text):
         raise Ineligible(f"the name {text!r} needs the writer's escape directives")
-    return ("'" + text.replace("'", "''") + "'").encode("utf-8").decode("latin-1").encode("utf-8")
+    return step_string_literal(text.encode("utf-8").decode("latin-1").encode("utf-8"))
 
 
 class _StepText:

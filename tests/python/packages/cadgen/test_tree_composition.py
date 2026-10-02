@@ -223,7 +223,7 @@ class SplicedStepTest(Fixture):
     as any reader can tell: its cold compile is the exported file's, and the composed tree binds
     to it (``cadgen.store._splice_step``)."""
 
-    def spliced_parent(self, *, grouped=False, names=("link #1 it's", "b ''#2'' (x)")):
+    def spliced_parent(self, *, grouped=False, names=("link #1 it's", "b ''#2'' (6')")):
         import build123d as bd
 
         shape = self.parent([(self.a_hash, bd.Location((0.1, 0.2, 0.3))),

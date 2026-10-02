@@ -791,6 +791,14 @@ Each with the failure it prevents.
   are, it numbers NAUO instances 1..N, adds no styles and prints no `-0.`.
   Prevents: one model writing two documents, so the packages and index
   entries keyed by the other spelling's bytes are orphaned.
+- **Names read back.** OCCT's STEP reader ends a string at an escaped quote
+  (`''`) followed by spaces and `,` or `)`. A part named `post (6')` or
+  `x('',y)` then lost its product or came back renamed, in every OCCT-based
+  reader, and failed the build's read-back. The writer spells every quote in
+  such a literal as Part 21's `\X\27` instead, which readers decode to the
+  same name (`step_export.step_string_literal`; the splice spells its own
+  names the same way). Every other literal keeps OCCT's spelling, and a file
+  without such a name is never read again.
 - **Publish rule.** `cadgen.store.publish.decide`: a build rejects replacing a
   current record with a stale one — if the record on disk already reflects the
   closure as it is NOW and the build that finished ran against older sources,

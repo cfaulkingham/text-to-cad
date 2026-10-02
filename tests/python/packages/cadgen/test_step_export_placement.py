@@ -10,7 +10,7 @@ import build123d as bd
 from cadgen._internal.component_package import _occurrence_color
 from cadgen._internal.step_scene_loader import load_step_scene
 from cadgen._internal.step_scene_mesh import scene_occurrence_shape
-from cadgen.step_export import export_build123d_step_file
+from cadgen.step_export import export_build123d_step_file, step_string_literal
 
 
 class StepExportPlacementTests(unittest.TestCase):
@@ -63,6 +63,43 @@ class StepExportPlacementTests(unittest.TestCase):
                     self.assertEqual(node.label, label)
                     self.assertEqual(node.color, color)
                     self.assertTrue(node.wrapped.IsSame(wrapped))
+
+
+class NamesOcctWouldMisreadTests(unittest.TestCase):
+    """OCCT's reader ends a string at an escaped quote followed by spaces and ',' or ')', so the
+    writer spells such a name's quotes \\X\\27, and every other name as OCCT does."""
+
+    def test_every_name_reads_back_with_its_product_in_place(self):
+        self.assertEqual(step_string_literal(b"it's"), b"'it''s'")
+        self.assertEqual(step_string_literal(b"post (6')"), b"'post (6\\X\\27)'")
+        self.assertEqual(step_string_literal(b"x('',y)"), b"'x(\\X\\27\\X\\27,y)'")
+        names = ["post (6')", "x('',y)", "a', b", "it's", "L" * 60 + " post (6') " + "M" * 70 + " end'),x"]
+        with tempfile.TemporaryDirectory(prefix="step-names-") as tmp:
+            parts = []
+            for index, name in enumerate(names):
+                part = bd.Pos(10 * index, 0, 0) * bd.Solid.make_box(2, 3, 4)
+                part.label = name
+                parts.append(part)
+            path = Path(tmp) / "names.step"
+            export_build123d_step_file(bd.Compound(children=parts, label="names"), path)
+            scene = load_step_scene(path)
+            self.assertEqual(len(scene.roots), 1)
+            self.assertEqual([(child.name, child.transform[3]) for child in scene.roots[0].children],
+                             [(name, 10.0 * index) for index, name in enumerate(names)])
+            data = path.read_bytes()
+            self.assertIn(b"'post (6\\X\\27)'", data)
+            self.assertIn(b"'it''s'", data)
+
+    def test_a_file_whose_names_read_back_keeps_occt_spelling(self):
+        with tempfile.TemporaryDirectory(prefix="step-names-") as tmp:
+            part = bd.Solid.make_box(2, 3, 4)
+            part.label = "it's (big)"
+            path = Path(tmp) / "plain.step"
+            export_build123d_step_file(bd.Compound(children=[part], label="plain"), path)
+            data = path.read_bytes()
+            self.assertIn(b"'it''s (big)'", data)
+            self.assertNotIn(b"\\X\\27", data)
+
 
 
 if __name__ == "__main__":
