@@ -78,6 +78,18 @@ class StepPublicationTests(unittest.TestCase):
         self.assertEqual(read_record(f"{self.model}::part"), record)
         self.assertEqual(list(self.root.glob(".part-*")), [], "private stages are cleaned")
 
+    def test_a_stale_build_skips_the_saved_tree_reuse_check(self) -> None:
+        # The gate already called this build stale. The reuse check hashes the
+        # saved STEP, and for a model with kinematics its sidecar's binding to
+        # it: work only a current model can use.
+        from cadgen._internal import generation
+
+        self.assertEqual(self.build(10, annotated=True), 0, self.output)
+        with mock.patch.object(generation, "_existing_topology_artifact_matches_spec_without_scene",
+                               side_effect=AssertionError("reuse check on a stale build")) as check:
+            self.assertEqual(self.build(12, annotated=True), 0, self.output)
+        check.assert_not_called()
+
     def test_failed_readback_keeps_the_saved_pair(self) -> None:
         self.assertEqual(self.build(10), 0, self.output)
         before = self.step.read_bytes()

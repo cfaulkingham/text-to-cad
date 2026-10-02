@@ -821,10 +821,12 @@ def _generate_step_outputs(
     # current and nothing forces a run. A generated model's freshness rides on its recorded
     # source closure; an imported/committed STEP's freshness rides on the STEP hash recorded in
     # the tree (verified inside the artifact-matches gate), so it needs no closure check.
-    if (
-        not force
-        and _existing_topology_artifact_matches_spec_without_scene(spec)
-        and (reuse_tree is not None if spec.source == "generated" else _assembly_glb_package_current(spec))
+    # A stale verdict settles it before the descriptor check, which hashes the saved
+    # document (and, for a model with kinematics, its sidecar's binding to it).
+    if not force and (
+        (reuse_tree is not None and _existing_topology_artifact_matches_spec_without_scene(spec))
+        if spec.source == "generated"
+        else (_existing_topology_artifact_matches_spec_without_scene(spec) and _assembly_glb_package_current(spec))
     ):
         if logger is not None:
             logger.debug(f"reused current tree: {_display_path(spec.step_path)}")
