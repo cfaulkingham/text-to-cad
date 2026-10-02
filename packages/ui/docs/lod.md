@@ -28,7 +28,11 @@ display concern only.
 
 Assemblies with at least 64 unique components can start at a coarser display
 tessellation when standard meshes are not cached. Cached standard meshes are
-preferred immediately, subject to their probed decode size and admission.
+preferred immediately, subject to their probed decode size and admission. The
+tiers are probed a chunk of components at a time and the cached bodies read a
+batch at a time (`createInitialDisplayPlans`, `packageBatchReads.js`), the first
+of each the size of the first publish, so the first geometry waits on no more
+than it draws.
 Smaller assemblies start at the standard level, except that an individually
 oversized component may start coarse. A component above the concurrent decode
 cap runs alone only when the shared Viewer memory envelope can reserve its

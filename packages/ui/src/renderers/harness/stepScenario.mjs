@@ -156,6 +156,50 @@ export function reviseFixture(fixture, revision) {
   return { ...fixture, view, sidecar, assembly: Buffer.from(JSON.stringify(view)) };
 }
 
+/**
+ * The shared tessellation cache as an earlier open leaves it: every component of `fixture` at the
+ * standard tier, tessellated here as the viewer would and keyed and encoded as the store keeps it.
+ * Answers the routes the client reads it by: a probe, a batch read and a single read.
+ */
+async function warmTessellationCache(fixture) {
+  const [{ parseSurf }, { tessellateComponent }, cache] = await Promise.all([
+    import('@text-to-cad/core/lib/surf/container.js'),
+    import('@text-to-cad/core/lib/surf/tessellate.js'),
+    import('@text-to-cad/core/lib/surf/tessellationCache.js'),
+  ]);
+  const entries = new Map();
+  const tessellated = new Map();
+  for (const component of Object.values(fixture.view.components)) {
+    const surface = fixture.surfaces.get(component.surfaceInput);
+    if (!tessellated.has(surface.object)) {
+      const bytes = surface.bytes;
+      const { index, floats } = parseSurf(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      tessellated.set(surface.object, { index, mesh: tessellateComponent(index, floats, {}) });
+    }
+    const { index, mesh } = tessellated.get(surface.object);
+    const bytes = cache.encodeComponentTessellation(mesh, {
+      surfaceInput: component.surfaceInput, surfaceObject: surface.object, tessellation: {},
+      partColor: Array.isArray(index.partColor) ? index.partColor : null, edgeClasses: cache.edgeClassesFromSurfIndex(index),
+    });
+    const row = cache.validateTessellationProbeRow({ schemaVersion: 1,
+      object: createHash('sha256').update(bytes).digest('hex'), ...cache.tessellationPayloadFacts(bytes) });
+    entries.set(cache.tessellationCacheKey(component.surfaceInput, {}), { bytes: Buffer.from(bytes), row });
+  }
+  const binary = (response, bytes) => {
+    response.setHeader('Content-Type', 'application/octet-stream');
+    response.setHeader('Content-Length', String(bytes.byteLength));
+    response.end(bytes);
+  };
+  return {
+    probe: keys => ({ entries: Object.fromEntries(keys.filter(key => entries.has(key)).map(key => [key, entries.get(key).row])) }),
+    batch: (response, requested) => binary(response, Buffer.from(cache.encodeTessellationCacheBatch(requested.map(({ tessellationInput, object }) => {
+      const entry = entries.get(tessellationInput);
+      return entry?.row.object === object ? entry.bytes : null;
+    })))),
+    read: (response, key) => { const entry = entries.get(key); if (entry) { binary(response, entry.bytes); return true; } return false; },
+  };
+}
+
 /** The catalog entry the real scanner writes for this document, with the sidecar inline. */
 export function stepCatalogEntry({ view, sidecar, assembly, file }) {
   if (!sidecar) {
@@ -219,11 +263,14 @@ function harnessBundle() {
  *   `release(gate)` is called, so the package's three publishes are a test's to place
  *   rather than a race; `declare(false)` then serves its descriptor without the `bbox` it
  *   declares. `singlePart` serves the base alone as a cadgen single-part STEP
- *   (`stageSinglePartFixture`), its part named by an XCAF label entry.
+ *   (`stageSinglePartFixture`), its part named by an XCAF label entry. `warmCache` serves a shared
+ *   tessellation cache that already holds every component (`warmTessellationCache`); without it
+ *   the cache is cold, and every probe and read of it is a 404.
  */
-export async function serveStepHarness(t, { onRequest, progressive = false, singlePart = false } = {}) {
+export async function serveStepHarness(t, { onRequest, progressive = false, singlePart = false, warmCache = false } = {}) {
   const loaded = await loadStepFixture();
   const fixture = progressive ? stageProgressiveFixture(loaded) : singlePart ? stageSinglePartFixture(loaded) : loaded;
+  const tessellationCache = warmCache ? await warmTessellationCache(fixture) : null;
   const entry = stepCatalogEntry(fixture);
   // The file as the catalog lists it now (`revise`), and every revision a page may still ask
   // for, by its tree.
@@ -301,6 +348,16 @@ export async function serveStepHarness(t, { onRequest, progressive = false, sing
       }
       notFound(response); return;
     }
+    if (tessellationCache && url.pathname.endsWith('/__tess_cache/probe')) {
+      json(response, tessellationCache.probe((await readBody(request)).tessellationInputs || []));
+      return;
+    }
+    if (tessellationCache && url.pathname.endsWith('/__tess_cache/batch')) {
+      tessellationCache.batch(response, (await readBody(request)).entries || []);
+      return;
+    }
+    if (tessellationCache && request.method === 'GET' && url.pathname.endsWith('.tess')
+      && tessellationCache.read(response, decodeURIComponent(url.pathname.split('/__tess_cache/')[1].slice(0, -'.tess'.length)))) return;
     // A cold cache: the tessellation cache probes and writes back, and a clean
     // 404 is what "nothing warm here" looks like. Falling through to the HTML
     // shell instead makes the probe throw on a page that is not JSON.

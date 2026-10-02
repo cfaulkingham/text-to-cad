@@ -82,6 +82,27 @@ test("pending resolution polls the same request and subscriber token", async (t)
   assert.deepEqual(bodies[1].components, bodies[0].components);
 });
 
+test("a row ready before the rest of its request is announced at once, and once", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const D2 = "f".repeat(64), O2 = "9".repeat(64);
+  const row = (surfaceInput, object) => ({ surfaceInput, state: "ready", surfaceObject: object,
+    url: `/__cad/store?tree=${TREE}&surfaceInput=${surfaceInput}&object=${object}`, byteLength: 10 });
+  let polls = 0;
+  globalThis.fetch = async () => {
+    polls += 1;
+    return json({ viewId: VIEW, job: "job-2", components: {
+      part: row(D, O),
+      other: polls === 1 ? { surfaceInput: D2, state: "pending", job: "job-2" } : row(D2, O2),
+    } });
+  };
+  const announced = [];
+  const result = await resolveSurfaceComponents(descriptor, [{ cid: "part", surfaceInput: D }, { cid: "other", surfaceInput: D2 }],
+    { onReady: (cid, ticket) => announced.push([cid, polls, ticket.surfaceObject]) });
+  assert.deepEqual(announced, [["part", 1, O], ["other", 2, O2]]);
+  assert.equal(result.size, 2);
+});
+
 // Settle on the events the resolver actually produces, never on a stopwatch. The
 // abort used to be timed with `setTimeout(10)` and the cancel POST read after
 // `setTimeout(0)`, which makes the assertion depend on how fast the runner drains

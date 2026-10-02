@@ -153,9 +153,12 @@ workers. Idle pressure reclamation preserves active and queued consumers.
   callers. A failed worker request reports an error instead of retrying
   expensive tessellation on the UI thread. Inline execution is reserved for
   environments where workers cannot start.
-- A pool starts with one isolate and grows only for ready concurrent requests.
-  Sequential viewport refinement reuses that isolate until the drain becomes
-  idle; it does not create a maximum-size pool for each component.
+- A pool starts with one isolate and grows only for ready concurrent requests,
+  or when a package load finds its first components cached: it starts the
+  isolates its lanes will decode on (`prewarmSurfWorkerPool`, at most the
+  lanes' count), so their start overlaps the batch read of those bodies instead
+  of following it. Sequential viewport refinement reuses that isolate until the
+  drain becomes idle; it does not create a maximum-size pool for each component.
 - Pressure reclamation may release idle worker slots while active and queued
   consumers keep their work. Each live slot retains its own highest completed
   request estimate, including handled failures; reclamation or replacement
@@ -169,6 +172,17 @@ Browser mesh-cache reads start with a bounded metadata probe. The client
 admits the encoded object and conservative decoded size before fetching a
 body, binds that fetch to the probed object digest and byte limit, then
 verifies the v4 header and content address before adoption.
+
+A package's open reads its cache in groups, as a snapshot does: one probe for a
+chunk of components and one TESB read for a batch of their bodies, each
+growing from the loader's first publish (eight components) to the server's
+bounds (256 keys, 32 MiB), in load order (`packageBatchReads.js`). A batch's
+framed bytes are charged to the Viewer envelope before it is read and released
+once its last component has taken its body; each component's decode is still
+admitted on its own before it runs, and an entry the batch could not read or
+verify is that component's strict-read miss alone. The cold components'
+surfaces resolve up to 64 to a `/__cad/surfaces` request, each the moment its
+own row is ready.
 
 A validated warm entry carries the full surface-object provenance, so
 rendering does not need the SURF object or its derivation index to remain

@@ -41,7 +41,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('restores all 317 STEP components after remount without a descriptor, SURF or TESS read', async () => {
+// A 317-component STEP whose every component has a warm standard entry: its descriptor, served
+// by a stubbed fetch, and the encoded entries by tessellation key.
+function warmLargeStep() {
   const client = { workspaceId: 'large-step-root', origin: 'https://cad-assets.test' };
   const model = { ...entry('warm-large-step', 'assembly'), sourceFormat: 'step',
     file: 'warm-large-step.step', url: 'https://cad-assets.test/__cad/asset?file=/warm-large-step&v=one', documentHash: 'document-one' };
@@ -74,6 +76,11 @@ it('restores all 317 STEP components after remount without a descriptor, SURF or
     return new Response(JSON.stringify(descriptor));
   });
   vi.stubGlobal('fetch', fetch);
+  return { client, model, encoded, fetch };
+}
+
+it('restores all 317 STEP components after remount without a descriptor, SURF or TESS read', async () => {
+  const { client, model, encoded, fetch } = warmLargeStep();
   const probe = vi.fn(async keys => keys.map(key => encoded.get(key)?.row || null));
   const bodies = vi.fn(async row => encoded.get(row.tessellationInput)?.bytes.slice() || null);
   const owner = createTessellationCache({ provider: { probeMany: probe, getProbed: bodies } });
@@ -110,5 +117,27 @@ it('restores all 317 STEP components after remount without a descriptor, SURF or
     expect(changed.result.current.meshState).toBeNull();
     expect(changed.result.current.lodPackage).toBeNull();
     changed.unmount();
+  } finally { owner.dispose(); }
+});
+
+// The open itself: where each component probed its cache and read its body alone, a chunk of
+// components shares one probe and a batch of them one read, growing from the first publish's eight.
+it('opens a warm 317-component STEP with a probe per chunk and its bodies in batches, none read alone', async () => {
+  const { client, model, encoded } = warmLargeStep();
+  const probe = vi.fn(async keys => keys.map(key => encoded.get(key)?.row || null));
+  const single = vi.fn(async row => encoded.get(row.tessellationInput)?.bytes.slice() || null);
+  const many = vi.fn(async rows => rows.map(row => encoded.get(row.tessellationInput)?.bytes.slice() || null));
+  const owner = createTessellationCache({ provider: { probeMany: probe, getProbed: single, getManyProbed: many } });
+  try {
+    const opened = renderHook(() => assets(model, client, owner.createSession()));
+    await act(() => opened.result.current.loadMeshForEntry(model));
+    expect(opened.result.current.error).toBe('');
+    expect(opened.result.current.meshState.assemblyInteractionReady).toBe(true);
+    expect(opened.result.current.meshState.meshData.parts).toHaveLength(317);
+    expect(probe.mock.calls.map(([keys]) => keys.length)).toEqual([8, 16, 32, 64, 128, 69]);
+    expect(many.mock.calls.map(([rows]) => rows.length)).toEqual([8, 16, 32, 64, 128, 69]);
+    expect(single).not.toHaveBeenCalled();
+    expect(viewerMemoryPolicy.snapshot().inFlightBytes).toBe(0);
+    opened.unmount();
   } finally { owner.dispose(); }
 });

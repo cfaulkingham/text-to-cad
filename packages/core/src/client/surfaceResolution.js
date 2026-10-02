@@ -94,12 +94,16 @@ export class SurfaceResolutionError extends Error {
  * Resolve exact SURF objects for one frozen runtime view. A fully warm TESS
  * path does not call this function. The request never computes D or producer
  * identity in JavaScript; it forwards the backend-prepared opaque pins.
+ *
+ * `onReady(cid, ticket)`, when given, hears each component the moment its row is
+ * ready, once, while the request goes on waiting for the rest of its components:
+ * a caller that asked for many need not hold the first behind the last.
  */
-export async function resolveSurfaceComponents(descriptor, requested, { signal, client } = {}) {
+export async function resolveSurfaceComponents(descriptor, requested, { signal, client, onReady = null } = {}) {
   if (!client) throw new TypeError("Surface resolution requires a CAD workspace service");
   const list = Array.isArray(requested) ? requested : [];
   if (list.length <= SURFACE_REQUEST_MAX_COMPONENTS) {
-    return resolveSurfaceRequest(descriptor, list, { signal, client });
+    return resolveSurfaceRequest(descriptor, list, { signal, client, onReady });
   }
   // Every chunk is its own request (and subscriber job); one failing stops the others.
   const controller = new AbortController();
@@ -112,7 +116,7 @@ export async function resolveSurfaceComponents(descriptor, requested, { signal, 
       chunks.push(list.slice(start, start + SURFACE_REQUEST_MAX_COMPONENTS));
     }
     const results = await Promise.all(chunks.map((chunk) => (
-      resolveSurfaceRequest(descriptor, chunk, { signal: controller.signal, client }).catch((error) => {
+      resolveSurfaceRequest(descriptor, chunk, { signal: controller.signal, client, onReady }).catch((error) => {
         controller.abort();
         throw error;
       })
@@ -128,7 +132,7 @@ export async function resolveSurfaceComponents(descriptor, requested, { signal, 
   }
 }
 
-async function resolveSurfaceRequest(descriptor, requested, { signal, client }) {
+async function resolveSurfaceRequest(descriptor, requested, { signal, client, onReady = null }) {
   const tree = digest(descriptor?.tree, "surface tree");
   const viewId = digest(descriptor?.viewId, "surface viewId");
   const producer = descriptor?.surfaceProducer;
@@ -154,6 +158,7 @@ async function resolveSurfaceRequest(descriptor, requested, { signal, client }) 
   };
   signal?.addEventListener("abort", cancel);
   let delay = INITIAL_POLL_MS;
+  const announced = new Set();
   try {
     for (;;) {
       if (signal?.aborted) throw abortError();
@@ -201,6 +206,10 @@ async function resolveSurfaceRequest(descriptor, requested, { signal, client }) 
           throw new Error(`Surface response changed the pinned object for ${request.cid}`);
         }
         ready.set(request.cid, ticket);
+        if (onReady && !announced.has(request.cid)) {
+          announced.add(request.cid);
+          onReady(request.cid, ticket);
+        }
       }
       if (!pending) return ready;
       await waitForPoll(delay, signal);

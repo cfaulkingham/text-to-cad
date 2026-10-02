@@ -1018,11 +1018,11 @@ export function createHttpTessellationCacheProvider({
         const container = await boundedResponseBytes(response, limit);
         const entries = decodeTessellationCacheBatch(container);
         if (!entries || entries.length !== rows.length) return null;
-        for (let index = 0; index < rows.length; index += 1) {
-          if (!entries[index] || await sha256Hex(entries[index]) !== rows[index].object
-            || !tessellationPayloadFacts(entries[index], rows[index])) return null;
-        }
-        return entries;
+        // Each entry is verified on its own: one the store no longer holds, or holds damaged, is a
+        // miss for that component alone, never for every other component in the batch.
+        const digests = await Promise.all(entries.map((entry) => (entry ? sha256Hex(entry) : null)));
+        return entries.map((entry, index) => (entry && digests[index] === rows[index].object
+          && tessellationPayloadFacts(entry, rows[index]) ? entry : null));
       } catch (error) {
         if (abortError(error, signal)) throw error;
         return null;

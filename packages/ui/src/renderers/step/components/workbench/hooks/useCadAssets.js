@@ -6,7 +6,9 @@ import {
   loadRenderSurfSelectorBundle,
   peekRenderGlb,
   peekRenderSelectorBundle,
+  peekRenderSurf,
   peekRenderTopologyIndex,
+  prewarmSurfWorkers,
   releaseRenderSurfLevel,
   releaseSurfWorkers,
   surfTessellationCacheKey
@@ -34,6 +36,7 @@ import {
 } from "./packageDescriptorCache.js";
 import {
   createProgressivePackageLoader,
+  orderComponentsForProgressiveLoad,
   PROGRESSIVE_LOAD_MAX_INFLIGHT_BYTES,
   progressiveLoadProgress,
   publishMeshCostAccounting,
@@ -41,7 +44,8 @@ import {
   meshStateAfterCancelledLoad,
   shouldRetainCompleteSameFileMesh
 } from "./packageProgressiveLoad.js";
-import { initialDisplayLodPlan, probeInitialDisplayLod } from "../../../render/initialDisplayLod.js";
+import { createInitialDisplayPlans, initialDisplayLodPlan, probeInitialDisplayLod } from "../../../render/initialDisplayLod.js";
+import { createSurfaceTicketBatches, createTessellationBodyBatches } from "./packageBatchReads.js";
 import {
   matchingDisplayedPackageContext,
   retainedComponentMeshesForRevision
@@ -831,6 +835,64 @@ export function useCadAssets({
             }));
           }
         }
+        // One request for many components where a lane made one each (`packageBatchReads.js`):
+        // their initial tiers, probed a chunk at a time; the warm ones' bodies, read a batch at a
+        // time; the cold ones' surfaces, resolved up to a request's bound at a time. Each follows
+        // the order the lanes load in. A same-file revision's retained components read nothing.
+        const readOrder = orderComponentsForProgressiveLoad(packageDescriptor)
+          .filter(([cid]) => !retainedComponentMeshByCid[cid]);
+        const readCids = readOrder.map(([cid]) => cid);
+        // A warm load's isolates start once its first probe shows warm bodies, while the first batch
+        // is on the wire: a batch hands its bodies over at once, and they would all start only then.
+        // A cold load's start as its surfaces come (measured: started earlier, they finish later).
+        let prewarmed = false;
+        const prewarmForBatches = () => {
+          if (prewarmed) return;
+          prewarmed = true;
+          prewarmSurfWorkers(Math.min(readCids.length, packageComponentLoadConcurrency()));
+        };
+        const staticSurfUrl = component => (component?.surf ? resolvePackageAssetUrl(meshUrl, component.surf, resources) : "");
+        // The first geometry waits on the first chunk's probe and the first batch's read: nothing
+        // is read ahead of them until a lane is past its body read.
+        let firstBodyRead;
+        const pastFirstBodyRead = new Promise((resolve) => { firstBodyRead = resolve; });
+        const initialPlans = createInitialDisplayPlans({
+          components: readOrder,
+          maxInFlightBytes: PROGRESSIVE_LOAD_MAX_INFLIGHT_BYTES,
+          signal: controller.signal,
+          readAheadAfter: pastFirstBodyRead,
+          probeEntries: (inputs, tessellation, options) => tessellationCache.probeCachedTessellationEntries(inputs, tessellation, options),
+        });
+        const bodyBatches = createTessellationBodyBatches({
+          order: readCids,
+          rowOf: (cid) => {
+            const planned = initialPlans.peek(cid);
+            return planned === undefined ? undefined : planned?.cacheProbe || null;
+          },
+          readMany: (rows, options) => tessellationCache.getCachedEntryBytesMany(rows, options),
+          // A batch's bodies are charged before they are read, as a lane's own body is.
+          reserve: bytes => viewerMemoryPolicy.reserve({
+            category: "workerInFlight", bytes, label: "tessellation batch", kind: "replace", recordLimitation: false,
+          }),
+          release: token => viewerMemoryPolicy.release(token),
+          // A payload this page already holds needs no body read.
+          skip: (cid, row) => Boolean(peekRenderSurf("", {
+            tessellation: lodTessellationForLevel(initialPlans.peek(cid)?.plan?.level),
+            identity: { surfaceInput: row.surfaceInput, surfaceObject: row.surfaceObject },
+          })),
+          signal: controller.signal,
+        });
+        const surfaceTickets = createSurfaceTicketBatches({
+          order: readCids,
+          needs: (cid) => {
+            const planned = initialPlans.peek(cid);
+            if (planned === undefined) return undefined;
+            const component = packageDescriptor.components[cid];
+            return !planned && !(component?.surfaceObject && staticSurfUrl(component)) ? component : false;
+          },
+          resolve: (requested, options) => resolveSurfaceComponents(packageDescriptor, requested, { ...options, client }),
+          signal: controller.signal,
+        });
         const loader = createProgressivePackageLoader({
           descriptor: packageDescriptor,
           // Atomic same-file revisions keep the old complete composition on
@@ -858,12 +920,23 @@ export function useCadAssets({
             if (!identity?.surfaceObject) {
               throw new Error(`Component ${cid} has no resolved surface identity`);
             }
+            // A warm body comes from its batch; null leaves the read to the worker, as before.
+            let tessellationEntry = null;
+            try {
+              if (cacheProbe) tessellationEntry = await bodyBatches.take(cid, cacheProbe);
+            } finally {
+              firstBodyRead();
+            }
             const meshData = await loadRenderSurf(
               identity.surfUrl || "",
               { resources, tessellationCache,
                       signal: controller.signal,
                 tessellation: lodTessellationForLevel(componentPlan.level),
-                identity: { ...identity, tessellationProbe: cacheProbe || null },
+                identity: { ...identity, tessellationProbe: cacheProbe || null,
+                  // A cold component's tier was probed (sizeHint), or deliberately not after
+                  // repeated misses: there is nothing for the worker to read, only to write back.
+                  tessellationProbed: !cacheProbe,
+                  ...(tessellationEntry ? { tessellationEntry } : {}) },
                 memoryEstimateBytes: cacheProbe
                   ? estimatedBytes
                   : estimatedBytes * SURF_WORKER_TEMP_ESTIMATE_MULTIPLIER,
@@ -881,14 +954,21 @@ export function useCadAssets({
             skipCacheProbes = false,
           } = {}) => {
             const surfaceInput = String(component?.surfaceInput || "");
-            const cached = !skipCacheProbes && await probeInitialDisplayLod({ tessellationCache,
-              surfaceInput,
-              surfaceObject: component.surfaceObject,
-              maxInFlightBytes: PROGRESSIVE_LOAD_MAX_INFLIGHT_BYTES,
-              signal: controller.signal,
-              rejectedCacheObjects,
-            });
+            // The first ask is the package's batched probe; one after a probed body went missing
+            // asks afresh, alone, as every ask once did.
+            const afresh = rejectedCacheObjects.size > 0;
+            if (afresh) bodyBatches.discard(cid);
+            const cached = skipCacheProbes ? null : afresh
+              ? await probeInitialDisplayLod({ tessellationCache,
+                surfaceInput,
+                surfaceObject: component.surfaceObject,
+                maxInFlightBytes: PROGRESSIVE_LOAD_MAX_INFLIGHT_BYTES,
+                signal: controller.signal,
+                rejectedCacheObjects,
+              })
+              : (await initialPlans.plan(cid)) ?? null;
             if (cached) {
+              prewarmForBatches();
               initialPlanByCid.set(cid, cached.plan);
               componentIdentityByCid.set(cid, Object.freeze({
                 ...component,
@@ -899,7 +979,7 @@ export function useCadAssets({
             }
 
             let ticket;
-            const staticUrl = component.surf ? resolvePackageAssetUrl(meshUrl, component.surf, resources) : "";
+            const staticUrl = staticSurfUrl(component);
             if (component.surfaceObject && staticUrl) {
               ticket = {
                 surfaceInput,
@@ -908,10 +988,7 @@ export function useCadAssets({
                 byteLength: null,
               };
             } else {
-              const resolved = await resolveSurfaceComponents(packageDescriptor, [{
-                cid, surfaceInput, surfaceObject: component.surfaceObject,
-              }], { client, signal: controller.signal });
-              ticket = resolved.get(cid);
+              ticket = await surfaceTickets.ticket(cid, component);
             }
             const hint = ticket.byteLength || await surfContentLength(ticket.surfUrl, controller.signal, resources);
             const plan = initialDisplayLodPlan({
@@ -921,8 +998,11 @@ export function useCadAssets({
             });
             initialPlanByCid.set(cid, plan);
             componentIdentityByCid.set(cid, Object.freeze({ ...component, ...ticket }));
-            // A tier revised by the exact SURF size may already be warm.
-            const revised = skipCacheProbes ? null : (await tessellationCache.probeCachedTessellationEntries(
+            // A tier revised by the exact SURF size may already be warm. The package's probe of
+            // that tier answers it, unless this ask is afresh.
+            const answered = skipCacheProbes || afresh ? undefined : initialPlans.probed(surfaceInput, plan.level);
+            const revised = skipCacheProbes ? null : answered !== undefined ? answered
+              : (await tessellationCache.probeCachedTessellationEntries(
                 [surfaceInput], lodTessellationForLevel(plan.level), { resources, signal: controller.signal },
               )).get(surfaceInput) || null;
             if (revised && revised.surfaceObject === ticket.surfaceObject
@@ -1109,6 +1189,8 @@ export function useCadAssets({
         try {
           await loader.run();
         } finally {
+          bodyBatches.dispose();
+          surfaceTickets.dispose();
           // Nothing tessellates once the load ends — a later LOD refinement
           // builds a fresh pool — so the workers' isolates go back to the
           // process instead of holding the heap each grew for the largest

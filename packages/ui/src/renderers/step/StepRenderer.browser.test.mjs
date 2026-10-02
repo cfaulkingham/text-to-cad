@@ -1092,6 +1092,25 @@ test('a package that arrives in pieces is framed once, on the box it declares; a
   assert.deepEqual(errors, []);
 });
 
+// A warm package's open, request by request: where each component probed the shared cache and
+// read its body alone (twenty-five of each here), a chunk of components shares a probe and a
+// batch of them one read, growing from the loader's first publish of eight.
+test('a warm package opens with a probe per chunk and its bodies in batches, and nothing read one component at a time', async (t) => {
+  const staged = [];
+  const warm = await serveStepHarness({ after: cleanup => staged.push(cleanup) }, { progressive: true, warmCache: true });
+  t.after(async () => { for (const cleanup of staged.reverse()) await cleanup(); });
+  warm.release('a'); warm.release('b');
+  const { page, errors } = await warm.open();
+  await page.waitForFunction(() => window.__cadMeshCost?.final === true && window.__cadMeshCost.loadedComponents === 25);
+  const sent = pattern => warm.requests.filter(request => pattern.test(request)).length;
+  assert.equal(sent(/^POST \/one\/__tess_cache\/probe$/), 3, 'a probe for each chunk: eight, sixteen and the last one');
+  assert.equal(sent(/^POST \/one\/__tess_cache\/batch$/), 3, 'a read for each batch: eight, sixteen and the last one');
+  assert.equal(sent(/^GET \/one\/__tess_cache\//), 0, 'no body read alone');
+  assert.equal(sent(/\/__cad\/surfaces/), 0, 'no surface resolved');
+  assert.equal(sent(/^GET \/one\/__cad\/store\?tree=/), 0, 'no surface read');
+  assert.deepEqual(errors, []);
+});
+
 test('mobile touch: a tap selects, and a two-finger pinch zooms without selecting', async () => {
   const view = await open({ hasTouch: true, timeout: 10000 });
   const { page, pane, errors } = view;

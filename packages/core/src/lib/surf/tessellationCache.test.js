@@ -365,6 +365,21 @@ test("HTTP provider probes metadata before an exact bounded object read", async 
 });
 
 
+test("an HTTP batch read verifies each entry on its own: a damaged one is a miss for its component alone", async () => {
+  const entries = [encodedEntry(), encodedEntry({ surfaceInput: D2 })];
+  const rows = entries.map((entry) => validateTessellationProbeRow({ schemaVersion: 1,
+    object: createHash("sha256").update(entry).digest("hex"), ...tessellationPayloadFacts(entry) }));
+  const damaged = entries[1].slice();
+  damaged[damaged.length - 1] ^= 0xff;
+  const container = encodeTessellationCacheBatch([entries[0], damaged]);
+  const provider = createHttpTessellationCacheProvider({ origin: "http://cache.test", fetch: async () => new Response(container.slice(), {
+    status: 200, headers: { "content-length": String(container.byteLength) },
+  }) });
+  const bodies = await provider.getManyProbed(rows, { maxBytes: container.byteLength });
+  assert.deepEqual(bodies[0], entries[0]);
+  assert.equal(bodies[1], null);
+});
+
 test("bounded probes retain other chunks when one metadata response is unavailable", async (t) => {
   const inputs = Array.from({ length: 513 }, (_, n) => createHash("sha256").update(`input-${n}`).digest("hex"));
   const rows = new Map(inputs.map((surfaceInput) => {
