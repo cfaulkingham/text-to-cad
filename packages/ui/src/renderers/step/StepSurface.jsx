@@ -89,6 +89,7 @@ import {
 } from "./workbench/topologyCapabilities.js";
 import { stepJointHandles, stepPosableDofs } from "./workbench/jointHandles.js";
 import { useArtifact } from "./components/workbench/hooks/useArtifact.js";
+import { artifactFreshnessKey } from "./workbench/artifactResolution.js";
 import {
   rootAssemblyInspectionNodeId,
   buildAssemblyLeafToNodePickMap,
@@ -235,7 +236,6 @@ function StepSurfaceBody({ view, data }) {
   const storeSnapshot = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot);
   const selectedKey = fileKey(entry);
   const liveEntry = workspace.entry;
-  const manifestRevision = storeSnapshot.revision;
   const explicitFileParam = cadFileParamForEntry(entry);
   const catalogHydrated = storeSnapshot.hydrated;
   const catalogError = storeSnapshot.error || "";
@@ -338,18 +338,21 @@ function StepSurfaceBody({ view, data }) {
   const editingPreview = useEditingPreview(editingFile, { client,
     enabled: editingAvailable && !selectedCatalogPending,
   });
+  const editingHasView = entryHasMesh(liveEntry);
   // Unified render-artifact status for the selected entry: ready (render) | generating (loading) |
   // error (fatal). A missing/stale cache is not an issue — it just triggers a (re)build. Replaces
-  // the per-entry step-source-status fetch, the mesh-stripping merge, and the build effect.
+  // the per-entry step-source-status fetch, the mesh-stripping merge, and the build effect. It is
+  // asked again when this file's entry changes, never for the rest of the catalog
+  // (`artifactFreshnessKey`), and a build of a model already on screen is left to the build feed.
   const selectedArtifact = useArtifact(
     liveEntry ? cadFileParamForEntry(liveEntry) : "",
     {
       enabled: !selectedCatalogPending,
-      freshnessKey: `${liveEntry?.hash || ""}:${manifestRevision}`,
+      freshnessKey: artifactFreshnessKey(liveEntry, storeSnapshot),
+      shown: editingHasView,
       client,
     }
   );
-  const editingHasView = entryHasMesh(liveEntry);
   const selectedArtifactGenerating = selectedArtifact.status === "compiling" && !editingHasView;
   // The in-flight build's own report of where it is (null until it reports, and for
   // every loading state that is not an artifact build). Only meaningful while
