@@ -5,12 +5,20 @@ A view sends exactly the requests the web client sends (``/__cad/*``,
 own router -- one :class:`~cadgen.viewer.http_app.CadApp` per root -- and returns
 the status, headers and body bytes. There is one backend, not two: the router,
 its path containment and its limits are the ones the web app uses.
+
+A body travels base64 inside the host's JSON, and a JSON body of more than
+``GZIP_JSON_MIN_BYTES`` travels gzipped as well, flagged ``encoding: "gzip"``: the
+page inflates it before the client sees it, and the headers describe the inflated
+body. A large model's descriptor is 1.43 MB of base64 as it is and 0.28 MB gzipped,
+for about 5 ms of level-1 compression. Binary bodies (tessellations, SURF objects)
+barely shrink, so they travel as they are.
 """
 
 from __future__ import annotations
 
 import base64
 import email.utils
+import gzip
 import io
 import threading
 import time
@@ -31,6 +39,9 @@ _HOST_EFFECT_ROUTES = frozenset({"/__cad/reveal", "/__cad/clipboard", "/__cad/re
 # How long one catalog read answers every view of a root that asks for its revision: views sync
 # each second, and N of them on one root then cost one scan, not N.
 CATALOG_REVISION_SECONDS = 0.75
+# A JSON body above this size travels gzipped (the module docstring); one below it gains too
+# little to be worth the page's inflating it.
+GZIP_JSON_MIN_BYTES = 4 * 1024
 
 
 class _CapturedHandler:
@@ -60,7 +71,13 @@ class _CapturedHandler:
 
 
 def _result(status: int, headers: dict[str, str], body: bytes) -> dict[str, Any]:
-    return {"status": status, "headers": headers, "body": base64.b64encode(body).decode("ascii")}
+    reply: dict[str, Any] = {"status": status, "headers": headers}
+    media_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media_type == "application/json" and len(body) > GZIP_JSON_MIN_BYTES:
+        body = gzip.compress(body, compresslevel=1, mtime=0)
+        reply["encoding"] = "gzip"
+    reply["body"] = base64.b64encode(body).decode("ascii")
+    return reply
 
 
 class ViewerTunnel:

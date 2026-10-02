@@ -241,6 +241,21 @@ describe('the fetch tunnel', () => {
     expect([head.status, head.headers.get('content-length'), await head.text()]).toEqual([200, '11', '']);
   });
 
+  it('inflates a body the server gzipped for the trip, and refuses an encoding it cannot read', async () => {
+    const json = JSON.stringify({ entries: Array.from({ length: 200 }, (_, index) => ({ file: `parts/part-${index}.step` })) });
+    const gzipped = new Uint8Array(await new Response(new Response(json).body!.pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
+    let encoding = 'gzip';
+    const server = createServer({
+      callTool: async () => ({ structuredContent: { status: 200, encoding, body: encodeBase64(gzipped),
+        headers: { 'content-type': 'application/json', 'content-length': String(json.length) } } }),
+    });
+    const tunnel = createTunnelFetch(server, { kind: 'workspace', path: '/project' });
+    const reply = await tunnel(`${TUNNEL_ORIGIN}/__cad/catalog`);
+    expect([reply.headers.get('content-length'), await reply.text()]).toEqual([String(json.length), json]);
+    encoding = 'br';
+    await expect(tunnel(`${TUNNEL_ORIGIN}/__cad/catalog`)).rejects.toThrow(TypeError);
+  });
+
   it('turns a failed call into the TypeError fetch throws', async () => {
     const tunnel = createTunnelFetch(createServer({ callTool: async () => ({ isError: true, content: [{ type: 'text', text: 'not this thread' }] }) }), { kind: 'workspace', path: '/p' });
     await expect(tunnel(`${TUNNEL_ORIGIN}/__cad/catalog`)).rejects.toThrow(TypeError);

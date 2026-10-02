@@ -446,5 +446,45 @@ class ImportBudgetTest(unittest.TestCase):
         self.assertEqual(done.stdout.strip(), "")
 
 
+class TunnelBodyTest(unittest.TestCase):
+    """A large JSON body crosses the host's channel gzipped and says so; nothing else changes."""
+
+    def test_only_a_large_json_body_travels_gzipped(self) -> None:
+        import gzip
+
+        from cadgen.mcp.tunnel import GZIP_JSON_MIN_BYTES, ViewerTunnel
+
+        catalog = {"entries": [{"file": f"parts/part-{index}.step", "hash": f"{index:064x}"} for index in range(200)]}
+        binary = bytes(range(256)) * 256
+
+        class Routes:
+            def handle(self, request, response) -> None:
+                if request.path == "/__cad/catalog":
+                    response.send_json(200, catalog)
+                elif request.path == "/__cad/preview":
+                    response.send_json(200, {"state": "idle"})
+                else:
+                    response.send_bytes(200, binary, "application/octet-stream")
+
+        tunnel = ViewerTunnel()
+
+        def call(path: str, method: str = "GET") -> dict:
+            with mock.patch.object(tunnel, "app_for", return_value=Routes()):
+                return tunnel.serve(None, method=method, url=f"http://cad.invalid{path}", headers={}, body=b"")
+
+        written = json.dumps(catalog, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.assertGreater(len(written), GZIP_JSON_MIN_BYTES)
+        reply = call("/__cad/catalog")
+        self.assertEqual(reply["encoding"], "gzip")
+        self.assertEqual(gzip.decompress(base64.b64decode(reply["body"])), written)
+        self.assertEqual(int(reply["headers"]["content-length"]), len(written))
+        self.assertLess(len(reply["body"]), len(base64.b64encode(written)) // 4)
+        for path, method, body in (("/__cad/preview", "GET", b'{"state":"idle"}'),
+                                   ("/__tess_cache/a.tess", "GET", binary), ("/__cad/catalog", "HEAD", b"")):
+            reply = call(path, method)
+            self.assertNotIn("encoding", reply)
+            self.assertEqual(base64.b64decode(reply["body"]), body)
+
+
 if __name__ == "__main__":
     unittest.main()
