@@ -299,6 +299,41 @@ test("macro views fit visible occurrences without collapsing depth inside an ass
   }
 });
 
+test("a perspective closeup with nothing to fit on keeps near at a fraction of the pivot's depth", () => {
+  for (const scale of [0.001, 1, 1000]) {
+    const bounds = { min: [-100 * scale, -100 * scale, 0], max: [100 * scale, 100 * scale, 20 * scale] };
+    const camera = new THREE.PerspectiveCamera(40, 1, 0.01 * scale, 10000 * scale);
+    camera.position.set(0, -20 * scale, 15 * scale); camera.lookAt(0, 0, 10 * scale);
+    const pivot = new THREE.Vector3(0, 0, 10 * scale);
+    const pivotDepth = camera.position.distanceTo(pivot);
+    // The camera stands inside a part's own box, and a routine deforms another: the closeup
+    // fit has nothing to go on and near falls to the radius safety floor.
+    const records = [
+      { partBounds: { min: [-5 * scale, -25 * scale, 0], max: [5 * scale, 5 * scale, 20 * scale] } },
+      { partBounds: { min: [-2 * scale, -2 * scale, 9 * scale], max: [2 * scale, 2 * scale, 11 * scale] }, tubeGpuState: { active: true } }
+    ];
+    fitCameraDepthToBounds(camera, bounds, { placedObjects: records });
+    const collapsed = camera.near;
+    assert.ok(collapsed < pivotDepth / 1e4, "the fixture collapses near without a pivot");
+    fitCameraDepthToBounds(camera, bounds, { placedObjects: records, pivot });
+    assertClose(camera.near, pivotDepth / 256, 1e-9 * scale);
+    fitCameraDepthToBounds(camera, bounds, { placedObjects: records, pivot: pivot.toArray() });
+    assertClose(camera.near, pivotDepth / 256, 1e-9 * scale);
+    // A framed camera's own fit is far beyond the floor, and an orthographic camera has none.
+    camera.position.set(0, -400 * scale, 300 * scale); camera.lookAt(pivot);
+    fitCameraDepthToBounds(camera, bounds, { pivot });
+    const framedNear = camera.near;
+    fitCameraDepthToBounds(camera, bounds);
+    assert.equal(camera.near, framedNear);
+    const orthographic = new THREE.OrthographicCamera(-30 * scale, 30 * scale, 30 * scale, -30 * scale, 0.01 * scale, 10000 * scale);
+    orthographic.position.set(0, -20 * scale, 15 * scale); orthographic.lookAt(pivot);
+    fitCameraDepthToBounds(orthographic, bounds, { placedObjects: records });
+    const orthographicNear = orthographic.near;
+    fitCameraDepthToBounds(orthographic, bounds, { placedObjects: records, pivot });
+    assert.equal(orthographic.near, orthographicNear, "orthographic depth is linear: no floor");
+  }
+});
+
 test("photographic depth fitting retains foreground ground at oblique and low camera angles", () => {
   for (const scale of [0.001, 1, 1000]) {
     const bounds = { min: [-20 * scale, -10 * scale, 0], max: [20 * scale, 10 * scale, 8 * scale] };

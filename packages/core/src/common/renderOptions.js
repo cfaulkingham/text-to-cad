@@ -666,13 +666,33 @@ function closeupSubjectNear(camera, placedObjects, modelGroup) {
   return Number.isFinite(nearest) ? nearest * 0.98 : null;
 }
 
+// A perspective camera's depth step at distance z is about z^2 / (near * 2^24), so it is the
+// near plane, not the far one, that decides whether two close surfaces resolve. A closeup with
+// nothing better to fit on (the camera inside a part's own box, or a routine deforming what the
+// closeup fit measures) would otherwise put near at the 1e-5-radius safety floor and turn every
+// close pair at the pivot into a fight: a flange on its case, a rod in its tube, fins on their
+// barrel. Nothing that near the eye is worth that. Kept at 1/256 of the pivot's depth, the step
+// at the pivot stays under 2e-5 of its depth, and what lies nearer than that would fill the view.
+const PIVOT_NEAR_FRACTION = 1 / 256;
+const pivotPoint = new THREE.Vector3();
+
+function pivotNear(camera, pivot) {
+  if (!camera.isPerspectiveCamera) return 0;
+  if (Array.isArray(pivot) && pivot.length === 3 && pivot.every(Number.isFinite)) pivotPoint.fromArray(pivot);
+  else if (pivot?.isVector3) pivotPoint.copy(pivot);
+  else return 0;
+  const depth = -pivotPoint.applyMatrix4(camera.matrixWorldInverse).z;
+  return Number.isFinite(depth) && depth > 0 ? depth * PIVOT_NEAR_FRACTION : 0;
+}
+
 // Ordinary depth is required for the photographic shadow pass. Fit its range
 // to the subject as the camera moves, retaining room behind it for the stage.
 // The bounds corners cover the model; frustum-corner intersections cover the
 // foreground ground that is actually visible without forcing an arbitrary
-// scene-scale near plane.
+// scene-scale near plane. `pivot`, the point a perspective camera looks at
+// (the orbit target), bounds how close to the eye the near plane may come.
 export function fitCameraDepthToBounds(camera, bounds, {
-  placedObjects, modelGroup, groundZ = bounds?.min?.[2], gridBounds = null
+  placedObjects, modelGroup, groundZ = bounds?.min?.[2], gridBounds = null, pivot = null
 } = {}) {
   if (!camera?.isCamera || !Array.isArray(bounds?.min) || !Array.isArray(bounds?.max)
     || bounds.min.length < 3 || bounds.max.length < 3
@@ -694,7 +714,7 @@ export function fitCameraDepthToBounds(camera, bounds, {
   const groundNear = nearestGroundDepth * (nearestGroundDepth < 0 ? 1.02 : 0.98);
   const near = camera.isOrthographicCamera && groundNear < 0
     ? Math.min(subjectNear, groundNear)
-    : Math.max(Math.min(subjectNear, groundNear), radius * 1e-5, 1e-7);
+    : Math.max(Math.min(subjectNear, groundNear), radius * 1e-5, pivotNear(camera, pivot), 1e-7);
   const gridDepths = gridBounds ? boundsCorners(gridBounds).map(point => -point.applyMatrix4(camera.matrixWorldInverse).z) : [];
   const far = Math.max(Math.max(...depths, ...gridDepths) + radius * PHOTOGRAPHIC_STUDIO_STAGE_RADIUS_MULTIPLIER, near * 2);
   const unchanged = (actual, next) => Math.abs(actual - next)

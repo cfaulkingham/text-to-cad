@@ -431,7 +431,9 @@ export function useViewerRuntime({
         ) {
           return;
         }
-        fitCameraDepthToBounds(activeCamera, runtime?.modelBounds, viewerDepthSettings(runtime));
+        fitCameraDepthToBounds(activeCamera, runtime?.modelBounds, {
+          ...viewerDepthSettings(runtime), pivot: runtime?.controls?.target
+        });
       };
 
       let rafId = 0;

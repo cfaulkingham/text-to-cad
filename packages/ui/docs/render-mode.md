@@ -148,7 +148,9 @@ settings, not edits to the model or its material assignments.
 The interactive viewer retains one WebGL renderer, canvas and camera controls
 across every preset and settings edit. It uses shadow-compatible conventional
 depth throughout, fitting near/far planes to the current model, closeup records
-and floor/grid planes on every frame. The grid's bounds also fit the far plane;
+and floor/grid planes on every frame; a perspective near plane stays at or beyond
+1/256 of the orbit pivot's depth, so a closeup never trades depth resolution for
+a near plane at the eye. The grid's bounds also fit the far plane;
 it remains visible when Floor is off. Grid spacing is five cells across the
 default model framing. The grid, the stage and the Render studio's floor are
 SIZED from the model's rest placement for every renderer, STEP included: a pose, a

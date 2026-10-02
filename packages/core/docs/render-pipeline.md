@@ -195,7 +195,11 @@ The interactive viewer uses this fitted conventional depth for every preset so
 settings can enable shadows without replacing its renderer/canvas. The fit also
 uses visible records for closeups, the floor's actual elevation, and the grid's
 plane and bounds independently of Floor. Otherwise the subject's near plane
-clips foreground guides, or the far plane truncates their finite span. Standalone
+clips foreground guides, or the far plane truncates their finite span. A
+perspective camera passes its `pivot` (the point it looks at): its near plane
+never comes nearer than 1/256 of the pivot's depth, so a closeup the fit cannot
+measure (the camera inside a part's own box, or a routine deforming what it
+measures) keeps its depth resolution instead of making close surfaces fight. Standalone
 CAD snapshots may still use logarithmic depth: they render one fixed configuration.
 
 ### `common/source.js`

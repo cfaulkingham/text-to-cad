@@ -1288,7 +1288,8 @@ export async function captureModel(viewport, captureOptions = {}) {
       fitCameraDepthToBounds(renderCamera, outputBounds, {
         placedObjects: viewport.model.runtime ? viewport.model.displayRecords : viewport.model.placedObjects(),
         modelGroup: viewport.model.runtime?.modelGroup ?? null,
-        groundZ: viewport.studioRuntime.photographicStudio?.ground?.position.z ?? null
+        groundZ: viewport.studioRuntime.photographicStudio?.ground?.position.z ?? null,
+        pivot: resolvedCamera?.target ?? null
       });
       if (outputTimings) outputTimings.prepareStudioMs = Math.round(performance.now() - stageStarted);
     }
