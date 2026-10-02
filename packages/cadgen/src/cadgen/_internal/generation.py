@@ -469,15 +469,10 @@ def _generate_part_outputs(
         except ValueError:
             surface_producer = None
 
-        resolved_kinematics: dict[str, dict[str, object]] = {}
-
         def tree_kinematics(result_hash: str):
             declaration = getattr(scene, "kinematics", None)
             if not declaration:
                 return None
-            cached = resolved_kinematics.get(result_hash)
-            if cached is not None:
-                return copy.deepcopy(cached)
             from cadgen._internal.kinematics_resolve import resolve_kinematics_block
 
             # Mates resolve against the result's occurrences and labels; only an
@@ -487,24 +482,19 @@ def _generate_part_outputs(
                     declaration, tree_hash=result_hash, source_ref=str(spec.source_ref),
                     producer=surface_producer,
                 )
-            resolved_kinematics[result_hash] = copy.deepcopy(resolved)
-            return copy.deepcopy(resolved)
+            return resolved
 
         def publish_preview(result_hash: str, _tree: dict):
             if spec.source == "generated":
                 executors.emit_source_result(_model_for_spec(spec), result_hash)
             # The role, output path and progress belong to this request, never
-            # in the content-addressed tree or the saved document's index.
+            # in the content-addressed tree or the saved document's index. A
+            # build's status names its output and result and nothing else: its
+            # readers take neither geometry nor annotations from it (STORE.md §9b).
             if writes_step and executors.sink_installed():
                 executors.emit_event(executors.model_event(
                     _model_for_spec(spec), "building", phase="Saving STEP",
-                    preview={
-                        "output": str(spec.step_path.expanduser().resolve()),
-                        "tree": result_hash, "kinematics": tree_kinematics(result_hash),
-                        "appearance": copy.deepcopy(_tree.get("appearance")),
-                        "animation": copy.deepcopy(getattr(scene, "animation", None)),
-                        **({"surfaceProducer": surface_producer} if surface_producer is not None else {}),
-                    },
+                    preview={"output": str(spec.step_path.expanduser().resolve()), "tree": result_hash},
                 ))
             wait_children = getattr(scene, "wait_child_outputs", None)
             if wait_children is not None:
@@ -775,9 +765,7 @@ def _generate_part_outputs(
             executors.emit_event(executors.model_event(
                 model_path, "building", phase="STEP saved",
                 saved={"output": str(spec.step_path.expanduser().resolve()),
-                       "tree": document_tree_hash, "documentHash": exported_hash,
-                       "appearance": copy.deepcopy((sidecar_payload or {}).get("appearance")),
-                       "animation": copy.deepcopy((sidecar_payload or {}).get("animation"))},
+                       "tree": document_tree_hash, "documentHash": exported_hash},
             ))
         stats["published"] = True
         return stats

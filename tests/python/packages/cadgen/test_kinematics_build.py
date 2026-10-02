@@ -173,27 +173,22 @@ class KinematicsBuildTests(unittest.TestCase):
         # The descriptor stays STEP-pure: kinematics is sidecar-only.
         self.assertNotIn("kinematics", self._descriptor(script))
 
-    def test_preview_and_sidecar_share_one_owned_kinematics_resolution(self) -> None:
+    def test_the_build_status_carries_no_annotations(self) -> None:
+        # "Saving STEP" names the output and the source result, and its readers
+        # read no more: kinematics, appearance and animation live in the
+        # sidecar alone, resolved once, after the preview has gone out.
         from cadgen.daemon import executors
 
         script = self._write("owned.py")
-        previews = []
-
-        def sink(event: dict) -> None:
-            preview = event.get("preview")
-            if not isinstance(preview, dict) or not isinstance(preview.get("kinematics"), dict):
-                return
-            previews.append(json.loads(json.dumps(preview["kinematics"])))
-            # Reporting owns its event payload. A sink may retain or mutate it;
-            # neither action may alter the final sidecar or the cached value.
-            preview["kinematics"]["mates"][0]["name"] = "sink mutation"
+        events: list[dict] = []
 
         def resolve(block, **_kwargs):
+            self.assertTrue(any("preview" in event for event in events), "kinematics held back the preview")
             resolved = json.loads(json.dumps(block))
             resolved["mates"][0].update(parentId="o1.1", childId="o1.2")
             return resolved, {"#base": "o1.1", "#arm": "o1.2"}
 
-        executors.set_event_sink(sink)
+        executors.set_event_sink(events.append)
         try:
             with mock.patch(
                 "cadgen._internal.kinematics_resolve.resolve_kinematics_block",
@@ -204,9 +199,11 @@ class KinematicsBuildTests(unittest.TestCase):
             executors.set_event_sink(None)
 
         self.assertEqual(resolve_call.call_count, 1)
-        self.assertEqual(len(previews), 1)
-        self.assertEqual(previews[0], self._sidecar(script)["kinematics"])
-        self.assertEqual(self._sidecar(script)["kinematics"]["mates"][0]["name"], "swing")
+        (preview,) = [event["preview"] for event in events if "preview" in event]
+        (saved,) = [event["saved"] for event in events if "saved" in event]
+        self.assertEqual(set(preview), {"output", "tree"})
+        self.assertEqual(set(saved), {"output", "tree", "documentHash"})
+        self.assertEqual(self._sidecar(script)["kinematics"]["mates"][0]["parentId"], "o1.1")
 
     def test_axis_selector_refs_resolve_to_world_numbers(self) -> None:
         script = self.root / "pivot.py"

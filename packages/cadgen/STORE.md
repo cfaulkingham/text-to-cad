@@ -1529,7 +1529,11 @@ events. An editing session selects the newest request for its output and store;
 late older events cannot replace it. It may retain the previous visible model
 while the newer request builds. A daemon restart expires request ordering; a
 disconnected preview is labelled as such. The ledger is short-lived and
-deletable, never the only durable copy of an authored change.
+deletable, never the only durable copy of an authored change. A build's events
+carry what that status reads and no more: the "Saving STEP" preview names the
+output and the source result's tree, a saved result the document's tree and
+digest, and the ledger keeps nothing else of either. Kinematics, appearance
+and animation travel in the sidecar alone.
 
 Only model-run producers advance editing order. Compiling saved bytes and
 attaching a coalesced subscriber to an existing producer do not create a new
