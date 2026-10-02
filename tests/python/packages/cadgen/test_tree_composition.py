@@ -257,6 +257,25 @@ class SplicedStepTest(Fixture):
             written.append((step_hash, (self.root / "repeat.step").read_bytes()))
         self.assertEqual(written[0], written[1])
 
+    def test_non_ascii_names_splice_and_read_back(self):
+        # A lowercase accented name failed every build: the writer's spelling read back
+        # otherwise. Spliced or exported, both spell it as a Part 21 directive.
+        for grouped in (False, True):
+            with self.subTest(grouped=grouped):
+                name = f"non_ascii_{int(grouped)}"
+                shape = self.spliced_parent(grouped=grouped, names=("Bügel_ä", "ナット 🔩 it's"))
+                if grouped:
+                    shape.children[0].label = "grüppe"
+                _, _, stats, _ = self.build(shape, name=name, steps=self.steps)
+                self.assertTrue(stats["stepSpliced"])
+                self.assertTrue((self.root / f"{name}.step").read_bytes().isascii())
+                self.assertEqual(stats["documentTree"], self.parsed_document(self.root / f"{name}.step"))
+                shape = self.spliced_parent(grouped=grouped, names=("Bügel_ä", "ナット 🔩 it's"))
+                if grouped:
+                    shape.children[0].label = "grüppe"
+                _, _, exported, _ = self.build(shape, name=name, force=True)
+                self.assertEqual(stats["documentTree"], exported["documentTree"])
+
     def test_ineligible_parents_are_exported(self):
         import build123d as bd
 

@@ -387,7 +387,8 @@ identity. A real one (`link_arm`: a bar plus two placements of a pin model):
     it);
   - every child's file still has the bytes its record pins;
   - one writer and kernel wrote every child, in the same units;
-  - names the writer spells without escape directives;
+  - names without a backslash or a control character, which take the
+    writer's own escapes;
   - ids below 10^9;
   - OCCT's layout is recognised at every record the splice reads.
 
@@ -824,8 +825,17 @@ Each with the failure it prevents.
   reader, and failed the build's read-back. The writer spells every quote in
   such a literal as Part 21's `\X\27` instead, which readers decode to the
   same name (`step_export.respell_misread_quotes`, which the splice applies
-  to the names it writes). Every other literal keeps OCCT's spelling, and a file
-  without such a name is never read again.
+  to the names it writes). OCCT also writes a non-ASCII name as its UTF-8 read
+  as Latin-1 and encoded again, trimming any byte its C library takes for a
+  space from either end, so `Bügel_ä` came back `BÃ¼gel_Ã¤` and `à` lost a
+  byte, and both failed every build. A non-ASCII name therefore reaches OCCT in
+  ASCII, each run of non-ASCII characters as a Part 21 `\X2\` (basic plane)
+  or `\X4\` directive (`step_export.ascii_name`); the name pass restores the
+  single backslashes OCCT doubles, the splice spells names the same way
+  (`step_export.spell_name`), and every reader decodes the directives to the
+  same name. A written document is ASCII. Every other literal keeps OCCT's
+  spelling, and a file without such a name is never read again
+  (`STEP_WRITER_SCHEME` 3).
 - **Publish rule.** `cadgen.store.publish.decide`: a build rejects replacing a
   current record with a stale one — if the record on disk already reflects the
   closure as it is NOW and the build that finished ran against older sources,

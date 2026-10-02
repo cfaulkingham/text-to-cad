@@ -16,7 +16,7 @@ runs. That covers:
 - a child linked more than once: OCCT shares it, a splice would copy it;
 - a child file whose bytes are not the ones its record pins;
 - children written by different writers, or in other units;
-- a name that needs escape directives;
+- a name with a backslash or a control character, which take the writer's own escapes;
 - ids that would not fit in 32 bits.
 """
 
@@ -109,16 +109,16 @@ def _occt_real(value: float) -> bytes:
 
 
 def _quote(text: str) -> bytes:
-    """A name as cadgen's writer spells it. The UTF-8 bytes are re-encoded as if they were
-    Latin-1, which the reader's mojibake repair undoes, and quoted as OCCT quotes them, except
-    a quote OCCT's reader would misread (``step_export.respell_misread_quotes``). A backslash
-    or a control character takes the writer's escape directives, which this does not emulate."""
-    from cadgen.step_export import respell_misread_quotes
+    """A name as cadgen's writer spells it, quoted (``step_export.spell_name``): quotes
+    doubled, non-ASCII characters as Part 21 directives, a quote OCCT's reader would misread
+    as \\X\\27. A backslash or a control character takes the writer's own escapes, which this
+    does not emulate."""
+    from cadgen.step_export import spell_name
 
-    if "\\" in text or any(ord(char) < 0x20 or ord(char) == 0x7F for char in text):
-        raise Ineligible(f"the name {text!r} needs the writer's escape directives")
-    body = text.encode("utf-8").decode("latin-1").encode("utf-8").replace(b"'", b"''")
-    return b"'" + respell_misread_quotes(body) + b"'"
+    try:
+        return b"'" + spell_name(text) + b"'"
+    except ValueError as error:
+        raise Ineligible(str(error)) from None
 
 
 class _StepText:

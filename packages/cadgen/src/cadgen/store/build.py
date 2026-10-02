@@ -1344,8 +1344,9 @@ def _verify_reused_readback(
 
 #: The saved-STEP writer's own version (``writerInput``, STORE.md §3). Bump it
 #: with any change to the bytes cadgen writes for the same descriptor: XCAF
-#: construction, the header, or a canonicalization pass.
-STEP_WRITER_SCHEME = "cadgen-step-writer-2"
+#: construction, the header, or a canonicalization pass. 3: non-ASCII names are
+#: written as Part 21 directives (``step_export.spell_name``).
+STEP_WRITER_SCHEME = "cadgen-step-writer-3"
 # Finishes ride the sidecar, never the STEP (README law 16).
 _FINISH_KEYS = ("material", "materialId", "materialName", "baseColor")
 
