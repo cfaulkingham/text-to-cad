@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { clamp, finiteOr } from "./numbers.js";
 import { DEFAULT_RENDER_LIGHTING } from "./sceneSettings.js";
 import {
+  PHOTOGRAPHIC_STUDIO_BOUNCE_DIRECTION,
   PHOTOGRAPHIC_STUDIO_CARD_RADIANCE,
   PHOTOGRAPHIC_STUDIO_FILL_DIRECTION,
   PHOTOGRAPHIC_STUDIO_KEY_DIRECTION,
@@ -55,11 +56,45 @@ function card(scene, {
   return mesh;
 }
 
+const ROOM_RADIUS = 15;
+
 /**
- * Build the normalized HDR source scene used by PMREM. It contains a bright
- * neutral key card and an opposing fill card. Their directions match the
- * photographic direct-light rig; scene.environmentRotation rotates both at
- * runtime without rebuilding this resource.
+ * The enclosure the cards hang in: a seamless studio sweep, one radiance per
+ * elevation. It eases from the darkest band at the horizon up to the ceiling
+ * and down to the floor, so polished metal reflects a lit room with a horizon
+ * line, and faces turned away from every card still receive a soft fill.
+ */
+function addStudioSweep(scene) {
+  const { zenith, horizon, nadir } = PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE;
+  // Three's sphere is Y-up: read each vertex's elevation, then turn the
+  // sphere onto the studio's Z axis.
+  const geometry = new THREE.SphereGeometry(ROOM_RADIUS, 64, 32);
+  const positions = geometry.getAttribute("position");
+  const colors = new Float32Array(positions.count * 3);
+  for (let index = 0; index < positions.count; index += 1) {
+    const elevation = positions.getY(index) / ROOM_RADIUS;
+    const radiance = horizon
+      + ((elevation >= 0 ? zenith : nadir) - horizon) * Math.sqrt(Math.abs(elevation));
+    colors.fill(radiance, index * 3, index * 3 + 3);
+  }
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.rotateX(Math.PI / 2);
+  const room = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    side: THREE.BackSide,
+    toneMapped: false
+  }));
+  room.name = "studio-room";
+  scene.add(room);
+  return room;
+}
+
+/**
+ * Build the normalized HDR source scene used by PMREM: a bright neutral key
+ * card, a rear fill card and a side bounce inside a lit studio sweep. Their
+ * directions match the photographic direct-light rig;
+ * scene.environmentRotation rotates them together at runtime without
+ * rebuilding this resource.
  */
 export function createStudioEnvironmentScene(configuration = {}) {
   const lighting = lightingConfiguration(configuration);
@@ -68,19 +103,8 @@ export function createStudioEnvironmentScene(configuration = {}) {
   const cardRadiance = PHOTOGRAPHIC_STUDIO_CARD_RADIANCE / (lighting.size * lighting.size);
   const scene = new THREE.Scene();
   scene.name = "cadgen-photographic-environment";
-  const roomColor = new THREE.Color().setScalar(PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE);
-  scene.background = roomColor;
-
-  const room = new THREE.Mesh(
-    new THREE.BoxGeometry(30, 30, 30),
-    new THREE.MeshBasicMaterial({
-      color: roomColor,
-      side: THREE.BackSide,
-      toneMapped: false
-    })
-  );
-  room.name = "studio-room";
-  scene.add(room);
+  scene.background = new THREE.Color().setScalar(PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE.horizon);
+  addStudioSweep(scene);
 
   card(scene, {
     name: "studio-key-card",
@@ -89,11 +113,20 @@ export function createStudioEnvironmentScene(configuration = {}) {
     height: 3.6 * lighting.size,
     intensity: cardRadiance
   });
+  // Fill sets both fill cards: the rear one for horizontal reflections and the
+  // bounce on the key's far side, which lifts the faces the key cannot reach.
   card(scene, {
     name: "studio-fill-card",
     direction: new THREE.Vector3(...PHOTOGRAPHIC_STUDIO_FILL_DIRECTION),
     width: 3.2 * lighting.size,
     height: 4.2 * lighting.size,
+    intensity: cardRadiance * lighting.fill
+  });
+  card(scene, {
+    name: "studio-bounce-card",
+    direction: new THREE.Vector3(...PHOTOGRAPHIC_STUDIO_BOUNCE_DIRECTION),
+    width: 4 * lighting.size,
+    height: 5 * lighting.size,
     intensity: cardRadiance * lighting.fill
   });
   return scene;

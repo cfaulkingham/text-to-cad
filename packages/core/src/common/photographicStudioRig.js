@@ -6,12 +6,21 @@ export const PHOTOGRAPHIC_STUDIO_KEY_DIRECTION = Object.freeze([-0.35, -1, 1.5])
 // The broad rear fill reflects into horizontal surfaces viewed from iso, so
 // polished plates and black plastic retain detail instead of reflecting void.
 export const PHOTOGRAPHIC_STUDIO_FILL_DIRECTION = Object.freeze([-0.65, 0.8, 0.6]);
+// A broad bounce low on the key's far side, toward the default camera. It
+// fills the faces the key cannot reach — the right-hand side of an iso view —
+// and gives polished metal a second, opposing highlight. Fill sets it with the
+// rear fill card.
+export const PHOTOGRAPHIC_STUDIO_BOUNCE_DIRECTION = Object.freeze([0.95, 0.33, 0.45]);
 
 // Calibrated together at 0 EV. PMREM also supplies diffuse illumination, so
 // its key card and the shadow-casting spotlight share the illumination budget.
 export const PHOTOGRAPHIC_STUDIO_KEY_ILLUMINANCE = 2.1;
 export const PHOTOGRAPHIC_STUDIO_CARD_RADIANCE = 8;
-export const PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE = 0.04;
+// The sweep the cards hang in, never a void: a bright ceiling, the darkest band
+// at the horizon and a light floor's bounce below. A black enclosure crushed
+// every face turned away from the cards, and every polished metal surface that
+// reflected it, to black.
+export const PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE = Object.freeze({ zenith: 0.42, horizon: 0.12, nadir: 0.2 });
 // The opaque stage is mostly backdrop-colored fill, with a smaller diffuse
 // response for subtle contact shadows. This also softens the spotlight pool
 // against the surrounding floor. Both weights are material-local: the model

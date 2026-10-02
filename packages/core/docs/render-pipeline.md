@@ -130,17 +130,23 @@ shadows, a 512px procedural environment and 2x snapshot capture. Technical
 `quality.tessellation` and `output.renderScale` remain explicit overrides.
 PNG output retains requested dimensions by resampling the full drawing buffer.
 
-The two studios use one physical Render pipeline. A neutral HDR key card and
-opposing fill card generate a procedural PMREM for authored PBR reflections;
-one aligned, model-scaled SpotLight supplies direct illumination and PCF contact
-shadows. Softbox size changes card area and bounded shadow softness while keeping
-total card flux stable. Rotation moves the direct light and
-`scene.environmentRotation` together around CAD Z. An overhead side key reveals
-depth; a rear fill card and dim enclosure keep reflections on dark and polished
-surfaces readable. Environment radiance and direct illumination share a
-calibrated zero-EV lighting budget. Khronos PBR Neutral tone mapping is fixed;
-`toneMappingExposure` is `2 ** exposure`. Light and dark differ only in default
-backdrop color.
+The two studios use one physical Render pipeline. A neutral HDR key card, a rear
+fill card and a side bounce card hang in a lit studio sweep and generate a
+procedural PMREM for authored PBR reflections; one aligned, model-scaled
+SpotLight supplies direct illumination and PCF contact shadows. Softbox size
+changes card area and bounded shadow softness while keeping total card flux
+stable. Fill sets both fill cards' radiance as a fraction of the key card's.
+Rotation moves the direct light and `scene.environmentRotation` together around
+CAD Z. An overhead side key reveals depth; the rear fill keeps horizontal
+reflections readable and the bounce, low on the key's far side, lifts the faces
+the key cannot reach (an iso view's right-hand side). The sweep
+(`PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE`: 0.42 overhead, 0.12 at the horizon and a
+light floor's 0.2 below, easing between them) is never a void: a face turned
+away from every card keeps a soft fill, and polished metal reflects a lit room
+with a horizon line rather than black. Environment radiance and direct illumination
+share a calibrated zero-EV lighting budget. Khronos PBR Neutral tone mapping is
+fixed; `toneMappingExposure` is `2 ** exposure`. Light and dark differ only in
+default backdrop color.
 
 `applyPhotographicStudio(THREE, runtime, configuration, options)` owns the
 synchronous light, ground and renderer state and updates those objects in place.
