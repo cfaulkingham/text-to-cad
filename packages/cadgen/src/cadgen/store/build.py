@@ -1077,13 +1077,12 @@ def build_tree_through_step(
     step_hash = None
     if child_steps is not None and not force and not walk.shapes:
         from cadgen.store._splice_step import Ineligible, splice_step
-        from cadgen.store.trees import flatten
 
         try:
             with timed(f"tree: splice STEP {step_path.name}"):
                 step_hash = splice_step(
                     out=step_path, root_name=root_name, tree=tree, descriptor=descriptor,
-                    children=child_steps(), child_descriptor=flatten,
+                    children=child_steps(),
                 )
         except Ineligible as reason:
             if logger is not None:

@@ -194,6 +194,20 @@ class ResidentProcessLifecycle(unittest.TestCase):
         self.assertEqual(connect.call_count, 2)
         self.assertEqual([frame["kind"] for frame in stale.sent + current.sent], ["status", "status"])
 
+    def test_a_build_verifies_its_read_back_exactly_when_its_caller_asked(self):
+        # CADGEN_VERIFY_READBACK is one build's request (STORE.md §10). It travels with the
+        # job, and a job whose caller did not set it runs without it, in a daemon started with it.
+        import os
+
+        from cadgen.daemon import worker
+
+        with mock.patch.dict("os.environ", {"CADGEN_VERIFY_READBACK": "1"}):
+            self.assertEqual(client.forwarded_env().get("CADGEN_VERIFY_READBACK"), "1")
+            worker._apply_request_env({"env": {}})
+            self.assertNotIn("CADGEN_VERIFY_READBACK", os.environ)
+            worker._apply_request_env({"env": {"CADGEN_VERIFY_READBACK": "1"}})
+            self.assertEqual(os.environ.get("CADGEN_VERIFY_READBACK"), "1")
+
     def test_the_daemon_popen_is_retained_by_an_owned_reaper(self):
         process = mock.Mock(pid=4321)
         finished = threading.Event()

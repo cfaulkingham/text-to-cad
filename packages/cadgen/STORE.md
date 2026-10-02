@@ -352,8 +352,8 @@ identity. A real one (`link_arm`: a bar plus two placements of a pin model):
   correspondence. The composed tree is published and captured exactly as an
   indexed read-back of already-seen bytes is, so the correspondence check,
   the canonical maps and the restore are the same code, and `index/document`
-  receives a tree equal to the cold compile of the bytes. The build reports
-  which path it took as `documentReadback` (`composed`, `indexed`, `parsed`);
+  receives a tree equal to the cold compile of the bytes. Under `--verbose` a
+  composed tree shows as the stage `tree: compose document from children`;
   `CADGEN_VERIFY_READBACK=1` (§10) proves a corpus by parsing as well and
   failing the build on any difference. This adds no staleness class: the gate
   decides whether the parent runs by its sources, and what it publishes for
@@ -383,7 +383,8 @@ identity. A real one (`link_arm`: a bar plus two placements of a pin model):
   - ids below 10^9;
   - OCCT's layout is recognised at every record the splice reads.
 
-  A forced build exports. The build reports which ran as `stepSpliced`.
+  A forced build exports. Under `--verbose` the stage names which ran:
+  `tree: splice STEP <file>` or `tree: assemble STEP <file>`.
 
   The spliced file's cold compile is the exported file's, and the composed
   tree binds to it as to any other bytes; `CADGEN_VERIFY_READBACK=1` proves
@@ -408,11 +409,13 @@ identity. A real one (`link_arm`: a bar plus two placements of a pin model):
   and finishes (README law 16). When a rebuild's writer input equals its
   record's, the STEP on disk when the build started still has the recorded
   `stepHash`, and that document's tree is complete, the build publishes its
-  result and writes only the sidecar and the record: no export, no read-back,
-  no correspondence. The recorded `documentTree` and maps carry over, the
-  result takes the recorded result's bounds, which the input pins, and the
-  build reports `documentReadback` as `kept`. The writer is pure (README law
-  5), so those bytes are what a write would produce. A forced build always
+  result and writes only the record, and the sidecar if its bytes changed: no
+  export, no read-back, no correspondence. An unchanged sidecar keeps its file
+  as the document does, because viewers version it by its stamp and a new one
+  reloads the model. The recorded `documentTree` and maps carry over, the
+  result takes the recorded result's bounds, which the input pins, and the run
+  says `kept STEP`. The writer is pure (README law 5), so those bytes are what
+  a write would produce. A forced build always
   writes; so does any rebuild whose record lacks `writerInput`. Bump
   `STEP_WRITER_SCHEME` with any change to the bytes cadgen writes for the same
   descriptor.
@@ -796,8 +799,8 @@ Each with the failure it prevents.
   `x('',y)` then lost its product or came back renamed, in every OCCT-based
   reader, and failed the build's read-back. The writer spells every quote in
   such a literal as Part 21's `\X\27` instead, which readers decode to the
-  same name (`step_export.step_string_literal`; the splice spells its own
-  names the same way). Every other literal keeps OCCT's spelling, and a file
+  same name (`step_export.respell_misread_quotes`, which the splice applies
+  to the names it writes). Every other literal keeps OCCT's spelling, and a file
   without such a name is never read again.
 - **Publish rule.** `cadgen.store.publish.decide`: a build rejects replacing a
   current record with a stale one — if the record on disk already reflects the
@@ -1566,7 +1569,8 @@ supersession does not cancel their exports.
   first difference: the tree hashes, the top-level keys that differ, the
   first differing occurrence, the canonical maps. It is for a maintainer's
   manual check over a corpus; it doubles the read-back's cost and nothing in
-  cadgen sets it.
+  cadgen sets it. Like the store root, it travels with each build to the warm
+  daemon, so it applies to exactly the builds started with it.
 - `cadgen store info` sizes the store against its cap, names any retired
   kind still present and any `index/` folder it does not know, and says when
   a newer cadgen's writes keep passes off the store. `cadgen store gc

@@ -23,7 +23,6 @@ Mesh tolerances and argv flags are not inputs.
 from __future__ import annotations
 
 import hashlib
-import os
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -34,7 +33,7 @@ from cadgen._internal import filetrace
 from cadgen.store.closure import changed_constant, current_closure_hash
 from cadgen.store.index import resolve_model_ref, split_model_ref
 from cadgen.store.records import read_record
-from cadgen.store.trees import _stamp_is_settled, tree_complete
+from cadgen.store.trees import _stamp, _stamp_is_settled, tree_complete
 
 
 @dataclass
@@ -86,10 +85,9 @@ _DIGESTS_LOCK = threading.Lock()
 def _file_stamp(path: Path) -> tuple | None:
     """The fingerprint ``trees._object_stamp`` takes, of a file outside the store."""
     try:
-        stat = os.stat(path)
+        return _stamp(str(path), Path(path))
     except OSError:
         return None
-    return (str(path), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
 
 def _sha256_file(path: Path) -> str | None:

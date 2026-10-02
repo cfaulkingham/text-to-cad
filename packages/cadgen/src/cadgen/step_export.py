@@ -986,9 +986,9 @@ def _normalize_negative_zero_reals_in_file(path: Path) -> bool:
     through one handle with the write offset trailing the read offset and
     truncates at the end — no second copy of the file on disk or in memory.
 
-    Runs LAST, after the style-tail canonicalization: that pass addresses the
-    file by byte offsets it computed from the bytes OCCT wrote, and this one
-    moves them.
+    Runs after the style-tail canonicalization: that pass addresses the file
+    by byte offsets it computed from the bytes OCCT wrote, and this one moves
+    them.
 
     Returns True when the file changed.
     """
@@ -1034,14 +1034,10 @@ def _normalize_negative_zero_reals_in_file(path: Path) -> bool:
 _MISREAD_QUOTE = re.compile(rb"''[ ]*[,)]")
 
 
-def step_string_literal(text: bytes) -> bytes:
-    """``text`` as a STEP string parameter: quotes and backslashes doubled, as OCCT's writer
-    spells them, with every quote written \\X\\27 where OCCT's reader would misread the
-    doubling."""
-    body = text.replace(b"\\", b"\\\\").replace(b"'", b"''")
-    if _MISREAD_QUOTE.search(body):
-        body = body.replace(b"''", b"\\X\\27")
-    return b"'" + body + b"'"
+def respell_misread_quotes(body: bytes) -> bytes:
+    """A string literal's body, its quotes doubled, with every quote written \\X\\27 where
+    OCCT's reader would misread the doubling; any other body unchanged."""
+    return body.replace(b"''", b"\\X\\27") if _MISREAD_QUOTE.search(body) else body
 
 
 # The records that carry the names cadgen writes: products and their occurrences.
@@ -1087,8 +1083,9 @@ def _respell_misread_literals(record: bytes) -> bytes:
                 break
             end += 2
         body = record[position + 1:end].replace(b"\r", b"").replace(b"\n", b"")
-        if _MISREAD_QUOTE.search(body):
-            parts += [record[cursor:position], b"'" + body.replace(b"''", b"\\X\\27") + b"'"]
+        respelled = respell_misread_quotes(body)
+        if respelled != body:
+            parts += [record[cursor:position], b"'" + respelled + b"'"]
             cursor = end + 1
         position = record.find(b"'", end + 1)
     parts.append(record[cursor:])
@@ -1276,10 +1273,10 @@ def write_xcaf_doc_step_file(
                         # artifact, and a whole-file `wb` that dies midway leaves a
                         # half-written STEP where the tail rewrite above cannot.
                         write_bytes_atomic(output_path, canonical)
-    # Third and last canonicalization, for the same reason as the other two:
-    # a value OCCT prints as `-0.` is the value it prints as `0.` elsewhere,
-    # and which one a build lands on follows the operation path, not the
-    # geometry. Last because it shifts every byte after it, and the style-tail
+    # Third canonicalization, for the same reason as the other two: a value
+    # OCCT prints as `-0.` is the value it prints as `0.` elsewhere, and which
+    # one a build lands on follows the operation path, not the geometry. After
+    # the style tail because it shifts every byte after it, and the style-tail
     # applier above addresses the file by offsets.
     with (logger.timed("normalize negative zero reals") if logger is not None else nullcontext()):
         _normalize_negative_zero_reals_in_file(output_path)

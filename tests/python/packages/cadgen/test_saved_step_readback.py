@@ -173,6 +173,27 @@ class SavedStepReadbackTest(unittest.TestCase):
         object_path(expected[2]["documentTree"]).unlink()
         self.assertIsNone(_kept_document(spec, expected[2]["writerInput"], on_disk), "an incomplete document tree")
 
+    def test_a_sidecar_with_unchanged_bytes_keeps_its_file(self):
+        # A viewer versions the sidecar by its file stamp, so rewriting the same bytes (a label
+        # edit whose document is kept) would reload the model for nothing.
+        from cadgen._internal.generation import _publish_sidecar
+
+        staged, saved = self.root / "stage" / "part.step", self.root / "saved" / "part.step"
+        staged_sidecar, saved_sidecar = (path.with_name("part.step.json") for path in (staged, saved))
+        for sidecar in (staged_sidecar, saved_sidecar):
+            sidecar.parent.mkdir()
+            sidecar.write_bytes(b'{"documentHash": "same"}')
+        before = os.stat(saved_sidecar)
+        _publish_sidecar(staged, saved)
+        after = os.stat(saved_sidecar)
+        self.assertEqual((after.st_ino, after.st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+        staged_sidecar.write_bytes(b'{"documentHash": "new"}')
+        _publish_sidecar(staged, saved)
+        self.assertEqual(saved_sidecar.read_bytes(), b'{"documentHash": "new"}')
+        self.assertFalse(staged_sidecar.exists(), "a changed sidecar is moved into place")
+        _publish_sidecar(staged, saved)
+        self.assertFalse(saved_sidecar.exists(), "a build that stages no sidecar removes the saved one")
+
     def test_new_geometry_digest_is_a_raw_miss_even_with_an_existing_path_record(self):
         from cadgen._internal.step_scene_loader import load_step_scene
         from cadgen.store.records import note_output, write_record

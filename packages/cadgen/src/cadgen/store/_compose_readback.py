@@ -48,36 +48,40 @@ class Ineligible(ValueError):
     """The ordinary STEP read-back must build this document tree."""
 
 
+def written_text(value: float) -> str:
+    """The text cadgen's writer prints for the finite real ``value``.
+
+    A real within ``[0.1, 1000)`` in magnitude takes twelve decimals cut to
+    fifteen characters (sign included), and any other real thirteen
+    significant digits in exponent form; trailing zeros are dropped and zero of
+    either sign is written ``0.``. A test pins this against the real writer.
+    """
+    if value == 0.0:
+        return "0."
+    if STEP_REAL_RANGE[0] <= abs(value) < STEP_REAL_RANGE[1]:
+        return ("%.12f" % value)[:STEP_REAL_RANGE_WIDTH].rstrip("0")
+    mantissa, exponent = ("%.12E" % value).split("E")
+    return mantissa.rstrip("0") + "E" + exponent
+
+
 def written_real(value: float) -> float:
     """The number OCCT's STEP reader returns for ``value`` after cadgen's writer
-    printed it.
-
-    The writer prints a real within ``[0.1, 1000)`` in magnitude with twelve
-    decimals cut to fifteen characters (sign included), and any other real
-    with thirteen significant digits in exponent form; trailing zeros are
-    dropped and a negative zero is written as ``0.``. The reader parses that
-    text to the nearest double. A test pins this against the real writer and
-    reader, and :func:`compose_document_tree` checks it against every child's
-    own document before trusting it for the parent's.
+    printed it (:func:`written_text`): the nearest double to that text.
+    :func:`compose_document_tree` checks this against every child's own
+    document before trusting it for the parent's.
     """
     value = float(value)
     if not math.isfinite(value):
         raise Ineligible("non-finite placement")
-    if value == 0.0:
-        return 0.0
-    magnitude = abs(value)
-    if STEP_REAL_RANGE[0] <= magnitude < STEP_REAL_RANGE[1]:
-        text = ("%.12f" % value)[:STEP_REAL_RANGE_WIDTH]
-    else:
-        text = "%.12E" % value
-    return float(text) + 0.0
+    return float(written_text(value)) + 0.0
 
 
 def _same_bits(a: float, b: float) -> bool:
     return a == b and math.copysign(1.0, a) == math.copysign(1.0, b)
 
 
-def _pure_translation(transform: Any) -> bool:
+def pure_translation(transform: Any) -> bool:
+    """Whether ``transform`` (16 numbers, row-major) only translates."""
     if type(transform) is not list or len(transform) != 16:
         return False
     if any(type(value) not in (float, int) or not math.isfinite(value) for value in transform):
@@ -168,7 +172,7 @@ def compose_document_tree(
         link_id = str(link["id"])
         if link.get("color") is not None:
             raise Ineligible(f"link {link.get('name')!r} carries a colour")
-        if not _pure_translation(link.get("transform")):
+        if not pure_translation(link.get("transform")):
             raise Ineligible(f"link {link.get('name')!r} is not a pure translation")
         name = _normalize_label_name(link.get("name"))
         if name is None:
@@ -260,10 +264,11 @@ def composed_bounds(occurrences: list[dict[str, Any]], components: Mapping[str, 
 
     Each leaf's key is its component's codec and BREP object, its ordinal and
     the placement's rotation; a leaf layout whose leaves all sit at the
-    prototype's placement makes that rotation the occurrence's own. Any box or
-    layout the index does not hold is :class:`Ineligible`: measuring one here
-    would place the prototype from serialized numbers, which can differ from
-    the native placement by ulps.
+    prototype's placement makes that rotation the occurrence's own. A layout
+    the index does not hold is measured from the component's bytes and
+    remembered. A box it does not hold is :class:`Ineligible`: measuring one
+    here would place the prototype from serialized numbers, which can differ
+    from the native placement by ulps.
     """
     from cadgen._internal.component_package import component_leaf_layout, decode_geometry_component
     from cadgen.store.bounds import cached_leaf_layout, remembered_box
@@ -282,8 +287,6 @@ def composed_bounds(occurrences: list[dict[str, Any]], components: Mapping[str, 
             # the layout is a pure function of the bytes and is remembered.
             layout = cached_leaf_layout(codec, brep, lambda entry=entry: component_leaf_layout(
                 decode_geometry_component(entry, read_verified_object(entry["brep"])).wrapped))
-            if type(layout) is not dict:
-                raise Ineligible(f"component {cid} has no leaf layout")
             layouts[cid] = layout
         if not layout["placed"]:
             raise Ineligible(f"component {cid} places a leaf of its own")

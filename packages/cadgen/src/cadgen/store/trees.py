@@ -35,6 +35,7 @@ import json
 import math
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from cadgen.store.objects import claim_object, object_path, put_object, read_verified_object
@@ -468,9 +469,15 @@ _TIMESTAMP_TICKS_NS = (2_000_000_000, 1_000_000_000)
 _TIMESTAMP_FLOOR_NS = 2 * 15_625_000
 
 
+def _stamp(key: str, path: Path) -> tuple:
+    """A file's fingerprint: ``key``, then its device, inode, size, mtime (at
+    ``_STAMP_MTIME_NS``) and ctime. Raises OSError when there is no file."""
+    stat = path.stat()
+    return (key, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
 def _object_stamp(digest: str) -> tuple:
-    stat = object_path(digest).stat()
-    return (digest, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    return _stamp(digest, object_path(digest))
 
 
 def _timestamp_resolution_ns(mtime_ns: int) -> int:

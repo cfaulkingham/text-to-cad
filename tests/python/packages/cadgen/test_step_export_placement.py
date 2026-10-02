@@ -10,7 +10,7 @@ import build123d as bd
 from cadgen._internal.component_package import _occurrence_color
 from cadgen._internal.step_scene_loader import load_step_scene
 from cadgen._internal.step_scene_mesh import scene_occurrence_shape
-from cadgen.step_export import export_build123d_step_file, step_string_literal
+from cadgen.step_export import export_build123d_step_file, respell_misread_quotes
 
 
 class StepExportPlacementTests(unittest.TestCase):
@@ -70,9 +70,9 @@ class NamesOcctWouldMisreadTests(unittest.TestCase):
     writer spells such a name's quotes \\X\\27, and every other name as OCCT does."""
 
     def test_every_name_reads_back_with_its_product_in_place(self):
-        self.assertEqual(step_string_literal(b"it's"), b"'it''s'")
-        self.assertEqual(step_string_literal(b"post (6')"), b"'post (6\\X\\27)'")
-        self.assertEqual(step_string_literal(b"x('',y)"), b"'x(\\X\\27\\X\\27,y)'")
+        self.assertEqual(respell_misread_quotes(b"it''s"), b"it''s")
+        self.assertEqual(respell_misread_quotes(b"post (6'')"), b"post (6\\X\\27)")
+        self.assertEqual(respell_misread_quotes(b"x('''',y)"), b"x(\\X\\27\\X\\27,y)")
         names = ["post (6')", "x('',y)", "a', b", "it's", "L" * 60 + " post (6') " + "M" * 70 + " end'),x"]
         with tempfile.TemporaryDirectory(prefix="step-names-") as tmp:
             parts = []

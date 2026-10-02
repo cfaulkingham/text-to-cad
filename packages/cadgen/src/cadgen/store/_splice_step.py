@@ -27,7 +27,9 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
+
+from cadgen.store._compose_readback import pure_translation, written_text
 
 
 class Ineligible(ValueError):
@@ -99,31 +101,24 @@ def _renumber(body: bytes, prefix: bytes) -> bytes:
 
 
 def _occt_real(value: float) -> bytes:
-    """The text OCCT's writer prints for a real, which ``_compose_readback.written_real`` parses
-    back. Magnitudes in [0.1, 1000) print as %.12f cut to 15 characters, anything else as
-    %.12E. Trailing zeros are dropped, and zero of either sign prints as '0.'."""
+    """The text OCCT's writer prints for a real (``_compose_readback.written_text``)."""
     value = float(value)
     if not math.isfinite(value):
         raise Ineligible("a placement is not finite")
-    if value == 0.0:
-        return b"0."
-    if 0.1 <= abs(value) < 1000.0:
-        return ("%.12f" % value)[:15].rstrip("0").encode()
-    mantissa, exponent = ("%.12E" % value).split("E")
-    return (mantissa.rstrip("0") + "E" + exponent).encode()
+    return written_text(value).encode()
 
 
 def _quote(text: str) -> bytes:
     """A name as cadgen's writer spells it. The UTF-8 bytes are re-encoded as if they were
-    Latin-1, which the reader's mojibake repair undoes, then quoted as
-    ``step_export.step_string_literal`` quotes them: as OCCT does, except a quote OCCT's reader
-    would misread. A backslash or a control character takes the writer's escape directives,
-    which this does not emulate."""
-    from cadgen.step_export import step_string_literal
+    Latin-1, which the reader's mojibake repair undoes, and quoted as OCCT quotes them, except
+    a quote OCCT's reader would misread (``step_export.respell_misread_quotes``). A backslash
+    or a control character takes the writer's escape directives, which this does not emulate."""
+    from cadgen.step_export import respell_misread_quotes
 
     if "\\" in text or any(ord(char) < 0x20 or ord(char) == 0x7F for char in text):
         raise Ineligible(f"the name {text!r} needs the writer's escape directives")
-    return step_string_literal(text.encode("utf-8").decode("latin-1").encode("utf-8"))
+    body = text.encode("utf-8").decode("latin-1").encode("utf-8").replace(b"'", b"''")
+    return b"'" + respell_misread_quotes(body) + b"'"
 
 
 class _StepText:
@@ -131,15 +126,15 @@ class _StepText:
 
     def __init__(self, path: Path, step_hash: str):
         self.path = Path(path)
-        self.data = self.path.read_bytes()
-        if hashlib.sha256(self.data).hexdigest() != step_hash:
+        data = self.path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != step_hash:
             raise Ineligible(f"{self.path.name} is not the document its record pins")
-        start = self.data.find(b"\nDATA;\n")
-        end = self.data.rfind(b"\nENDSEC;\nEND-ISO-10303-21;")
+        start = data.find(b"\nDATA;\n")
+        end = data.rfind(b"\nENDSEC;\nEND-ISO-10303-21;")
         if start < 0 or end < start:
             raise Ineligible(f"{self.path.name} is not a single-DATA-section STEP")
-        self.header = self.data[:start + 1]
-        self.body = self.data[start + 7:end + 1]
+        self.header = data[:start + 1]
+        self.body = data[start + 7:end + 1]
         if not self.body.startswith(b"#1 = "):
             raise Ineligible(f"{self.path.name}: its DATA does not start at #1")
         tail = self.body.rfind(b"\n#", 0, len(self.body) - 1)
@@ -297,9 +292,8 @@ def _structure(tree: Mapping[str, Any]) -> list[dict[str, Any]]:
     return convert(tree["assembly"]["root"])["children"]
 
 
-def _translation(transform: list[float]) -> tuple[float, float, float] | None:
-    linear = [transform[index] for index in (0, 1, 2, 4, 5, 6, 8, 9, 10)]
-    if linear != [1, 0, 0, 0, 1, 0, 0, 0, 1] or list(transform[12:]) != [0, 0, 0, 1]:
+def _translation(transform: Any) -> tuple[float, float, float] | None:
+    if not pure_translation(transform):
         return None
     return float(transform[3]), float(transform[7]), float(transform[11])
 
@@ -323,7 +317,6 @@ def splice_step(
     tree: Mapping[str, Any],
     descriptor: Mapping[str, Any],
     children: Mapping[str, ChildStep],
-    child_descriptor: Callable[[str], Mapping[str, Any]],
 ) -> str:
     """Write ``out`` for the all-link parent whose authored tree is ``tree`` and return its sha256.
 
@@ -331,10 +324,11 @@ def splice_step(
     - ``descriptor``: the flattened descriptor the writer would be given, with leaf world
       transforms.
     - ``children``: each linked child's tree hash mapped to the saved STEP its record pins.
-    - ``child_descriptor``: flattens a child's tree, for its own leaf transforms.
 
     Raises :class:`Ineligible` before anything is written whenever the ordinary writer must run.
     """
+    from cadgen.store.trees import flatten
+
     nodes = _structure(tree)
     links: list[Mapping[str, Any]] = []
 
@@ -416,7 +410,7 @@ def splice_step(
             edit[7] = b"#7 = PRODUCT(" + _quote(name) + b"," + _quote(name) + b",'',(#8));\n"
         if _translation(link["transform"]) == (0.0, 0.0, 0.0):
             continue
-        own_world = {row["id"]: row["transform"] for row in child_descriptor(child_tree).get("occurrences") or []}
+        own_world = {row["id"]: row["transform"] for row in flatten(child_tree).get("occurrences") or []}
         for leaf, (point, texts) in loaded[child_tree].leaf_points().items():
             child_transform = own_world.get(leaf)
             parent_transform = world.get(link_id if leaf == "o1" else f"{link_id}{leaf[2:]}")

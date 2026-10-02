@@ -6,7 +6,7 @@ import shutil
 import sys
 import time
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Sequence
 
@@ -51,41 +51,38 @@ from cadgen._internal.generation_spec import (
     _selector_options_for_part,
 )
 
-def _pinned_child_documents(scene: object) -> dict[str, str]:
-    """Each child tree the body pinned, mapped to the document tree that
-    child's record pins for it — only while the record still pins that exact
-    tree, so a child rebuilt since the parent called it resolves to nothing
-    and the parent's read-back parses its STEP instead of composing it."""
+def _pinned_child_records(scene: object) -> Iterator[tuple[str, dict]]:
+    """Each child tree the body pinned, with that child's record, only while the
+    record still pins that exact tree: a child rebuilt since the parent called it
+    yields nothing, and the parent reads back or exports instead."""
     from cadgen.store.records import read_record
 
-    documents: dict[str, str] = {}
-    for child in getattr(scene, "store_children", None) or ():
-        model, tree = child.get("model"), child.get("tree")
-        if not model or not tree:
-            continue
-        record = read_record(model)
-        if record and record.get("tree") == tree and record.get("documentTree"):
-            documents[str(tree)] = str(record["documentTree"])
-    return documents
-
-
-def _pinned_child_steps(scene: object) -> dict[str, object]:
-    """Each child tree the body pinned, mapped to the saved STEP that child's
-    record pins for it, while the record still pins that exact tree. A parent
-    may then be spliced from those files (``cadgen.store._splice_step``)."""
-    from cadgen.store._splice_step import ChildStep
-    from cadgen.store.records import read_record
-
-    steps: dict[str, object] = {}
     for child in getattr(scene, "store_children", None) or ():
         model, tree = child.get("model"), child.get("tree")
         record = read_record(model) if model and tree else None
-        if not record or record.get("tree") != tree or not record.get("stepHash"):
-            continue
-        step_hash = str(record["stepHash"])
+        if record and record.get("tree") == tree:
+            yield str(tree), record
+
+
+def _pinned_child_documents(scene: object) -> dict[str, str]:
+    """Each pinned child tree mapped to the document tree its record pins, from
+    which the parent's read-back may be composed."""
+    return {tree: str(record["documentTree"])
+            for tree, record in _pinned_child_records(scene) if record.get("documentTree")}
+
+
+def _pinned_child_steps(scene: object) -> dict[str, object]:
+    """Each pinned child tree mapped to the saved STEP its record pins, from
+    which the parent may be spliced (``cadgen.store._splice_step``)."""
+    from cadgen.store._splice_step import ChildStep
+
+    steps: dict[str, object] = {}
+    for tree, record in _pinned_child_records(scene):
+        step_hash = str(record.get("stepHash") or "")
         for path, entry in (record.get("outputs") or {}).items():
-            if Path(path).suffix.lower() in (".step", ".stp") and isinstance(entry, dict) and entry.get("sha256") == step_hash:
-                steps[str(tree)] = ChildStep(Path(path), step_hash)
+            if (step_hash and Path(path).suffix.lower() in (".step", ".stp")
+                    and isinstance(entry, dict) and entry.get("sha256") == step_hash):
+                steps[tree] = ChildStep(Path(path), step_hash)
                 break
     return steps
 
@@ -104,16 +101,33 @@ def _sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_or_none(path: Path) -> str | None:
+    try:
+        return _sha256_of(path)
+    except FileNotFoundError:
+        return None
+
+
 def _document_pair_state(step_path: Path) -> tuple[str | None, str | None]:
     from cadgen._internal.source_sidecar import source_sidecar_path
 
-    def digest(path: Path):
-        try:
-            return _sha256_of(path)
-        except FileNotFoundError:
-            return None
+    return _sha256_or_none(step_path), _sha256_or_none(source_sidecar_path(step_path))
 
-    return digest(step_path), digest(source_sidecar_path(step_path))
+
+def _publish_sidecar(staged_step: Path, entry_path: Path) -> None:
+    """Move the build's staged sidecar beside the saved STEP, or remove the saved
+    one when the build staged none. A saved sidecar that already has the staged
+    bytes stays in place, as a kept document does: a viewer versions the sidecar
+    by its file stamp, and a new stamp would reload the model for an edit that
+    changed nothing on screen, such as a label or a comment."""
+    from cadgen._internal.atomic_replace import replace_atomic
+    from cadgen._internal.source_sidecar import remove_source_sidecar, source_sidecar_path
+
+    staged, saved = source_sidecar_path(staged_step), source_sidecar_path(entry_path)
+    if not staged.is_file():
+        remove_source_sidecar(entry_path)
+    elif _sha256_or_none(saved) != _sha256_of(staged):
+        replace_atomic(staged, saved)
 
 
 def _kept_document(
@@ -541,8 +555,6 @@ def _generate_part_outputs(
                     child_steps=lambda: _pinned_child_steps(scene),
                     kept_document=lambda digest: _kept_document(spec, digest, expected_document_pair),
                 )
-            if stats.get("documentKept"):
-                logger.debug(f"kept {_display_path(spec.step_path)}: its writer input is unchanged")
         else:
             with logger.timed("tree: components"):
                 if not generated:
@@ -749,11 +761,7 @@ def _generate_part_outputs(
                 # A kept document is already in place, byte for byte.
                 if not stats.get("documentKept"):
                     replace_atomic(staged_step, spec.step_path)
-                staged_sidecar = source_sidecar_path(staged_step)
-                if staged_sidecar.is_file():
-                    replace_atomic(staged_sidecar, source_sidecar_path(spec.entry_path))
-                else:
-                    remove_source_sidecar(spec.entry_path)
+                _publish_sidecar(staged_step, spec.entry_path)
                 actual_pair = _document_pair_state(spec.step_path)
                 expected_sidecar = outputs.get(str(source_sidecar_path(spec.entry_path).resolve()), {}).get("sha256")
                 if actual_pair != (exported_hash, expected_sidecar):
