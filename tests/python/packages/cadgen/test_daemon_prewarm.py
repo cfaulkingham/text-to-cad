@@ -77,11 +77,15 @@ class WorkerScratchSweep(unittest.TestCase):
 
             gone = [folder(f"cadgen-views/{dead}"), folder(f"cadgen-view-{dead}-ab12cd34"),
                     file(f"cadgen-trace-{dead}-ab12cd34.log"),
-                    folder("cadgen-view-o1dname_"), file("cadgen-trace-o1dname_.log")]
+                    folder("cadgen-view-o1dname_"), file("cadgen-trace-o1dname_.log"),
+                    # A folder an earlier sweep condemned and was killed deleting.
+                    folder(f"cadgen-swept-{dead}-cadgen-view-o1dname2")]
             kept = [folder(f"cadgen-views/{live}"), folder("cadgen-views/not-a-pid"),
                     folder(f"cadgen-view-{live}-ef56gh78"), file(f"cadgen-trace-{live}-ef56gh78.log"),
                     folder("cadgen-view-newname_"), file("cadgen-trace-newname_.log"),
-                    folder("cadgen-viewer-info"), file("cadgen-bind-x1y2"), folder("cadgen-test-store.ab12")]
+                    folder("cadgen-viewer-info"), file("cadgen-bind-x1y2"), folder("cadgen-test-store.ab12"),
+                    # A live sweeper's condemned folder is its own to finish.
+                    folder(f"cadgen-swept-{live}-cadgen-view-busyname")]
             old = time.time() - 2 * temp_leftovers.UNNAMED_AGE_SECONDS
             for path in (root / "cadgen-view-o1dname_", root / "cadgen-trace-o1dname_.log"):
                 os.utime(path, (old, old))
@@ -89,6 +93,9 @@ class WorkerScratchSweep(unittest.TestCase):
             self.assertEqual(sorted(removed), sorted(str(path) for path in gone))
             self.assertEqual([path for path in gone if path.exists()], [])
             self.assertEqual([path for path in kept if not path.exists()], [])
+            # What this sweep condemned it also deleted.
+            self.assertEqual(sorted(path.name for path in root.glob("cadgen-swept-*")),
+                             [f"cadgen-swept-{live}-cadgen-view-busyname"])
 
     def test_scratch_is_named_after_its_process(self):
         import os

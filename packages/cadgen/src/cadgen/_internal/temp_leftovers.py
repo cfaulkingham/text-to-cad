@@ -17,8 +17,12 @@ every component it shows, so a killed worker can leave hundreds of megabytes.
 scratch an older cadgen named without a pid once it is older than
 :data:`UNNAMED_AGE_SECONDS`. It never removes a live process's: a pid it
 cannot judge counts as alive, and a pid reused by another process keeps its
-leftovers until that process ends. A daemon worker sweeps once as it starts
-(``daemon.worker.serve``), on a thread of its own, so a job never waits for it.
+leftovers until that process ends. A folder is first renamed
+``cadgen-swept-<sweeper pid>-<name>`` and then deleted, so a sweep killed
+midway leaves it condemned rather than half there with a fresh mtime, and the
+next sweep finishes it once that sweeper is gone. A daemon worker sweeps once
+as it starts (``daemon.worker.serve``), on a thread of its own, so a job never
+waits for it.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ VIEWS_DIRNAME = "cadgen-views"
 VIEW_PREFIX = "cadgen-view-"
 TRACE_PREFIX = "cadgen-trace-"
 TRACE_SUFFIX = ".log"
+SWEPT_PREFIX = "cadgen-swept-"
 #: How old scratch named without a pid (an older cadgen's) must be before a
 #: sweep takes it. A view lives for one export, a trace log for one build body.
 UNNAMED_AGE_SECONDS = 24 * 3600
@@ -100,10 +105,12 @@ def _abandoned(entry: os.DirEntry, owner: int | None, now: float) -> bool:
         return False
 
 
-def _remove(entry: os.DirEntry) -> bool:
+def _remove(entry: os.DirEntry, root: Path) -> bool:
     try:
         if entry.is_dir(follow_symlinks=False):
-            shutil.rmtree(entry.path)
+            condemned = root / f"{SWEPT_PREFIX}{os.getpid()}-{entry.name}"
+            os.rename(entry.path, condemned)
+            shutil.rmtree(condemned, ignore_errors=True)
         else:
             os.unlink(entry.path)
     except OSError:
@@ -122,14 +129,22 @@ def sweep(root: str | os.PathLike[str] | None = None, *, now: float | None = Non
     except OSError:
         served = []
     for entry in served:
-        if not pid_alive(int(entry.name)) and _remove(entry):
+        if not pid_alive(int(entry.name)) and _remove(entry, root):
             removed.append(entry.path)
     try:
         with os.scandir(root) as entries:
-            candidates = [entry for entry in entries if entry.name.startswith((VIEW_PREFIX, TRACE_PREFIX))]
+            candidates = [entry for entry in entries
+                          if entry.name.startswith((VIEW_PREFIX, TRACE_PREFIX, SWEPT_PREFIX))]
     except OSError:
         candidates = []
     for entry in candidates:
+        if entry.name.startswith(SWEPT_PREFIX):
+            # Condemned by a sweep that did not finish: finish it once that sweeper is gone.
+            owner = _owner(entry.name[len(SWEPT_PREFIX):])
+            if owner is not None and entry.is_dir(follow_symlinks=False) and not pid_alive(owner):
+                shutil.rmtree(entry.path, ignore_errors=True)
+                removed.append(entry.path)
+            continue
         if entry.name.startswith(VIEW_PREFIX):
             if not entry.is_dir(follow_symlinks=False):
                 continue
@@ -138,7 +153,7 @@ def sweep(root: str | os.PathLike[str] | None = None, *, now: float | None = Non
             if not entry.name.endswith(TRACE_SUFFIX) or not entry.is_file(follow_symlinks=False):
                 continue
             owner = _owner(entry.name[len(TRACE_PREFIX):])
-        if _abandoned(entry, owner, now) and _remove(entry):
+        if _abandoned(entry, owner, now) and _remove(entry, root):
             removed.append(entry.path)
     return removed
 

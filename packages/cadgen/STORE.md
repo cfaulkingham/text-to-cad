@@ -1259,7 +1259,10 @@ it shows. A worker sweeps them as it starts, on a thread of its own: the
 scratch of every pid no process holds, and scratch an older cadgen named
 without a pid once it is a day old. A live process's is never touched, a pid it
 cannot judge counts as live, and nothing in the store is involved
-(`_internal/temp_leftovers.py`).
+(`_internal/temp_leftovers.py`). A folder is renamed `cadgen-swept-<pid>-…`
+before it is deleted, so a sweep killed midway leaves it condemned rather than
+half there with a fresh mtime, and the next sweep finishes it once that
+sweeper is gone.
 
 **Silence means hung, not busy.** While a job runs, its worker emits a
 heartbeat frame every 10 s (carrying the job's last announced phase and its
