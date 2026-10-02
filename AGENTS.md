@@ -5,10 +5,12 @@ product and `models/` as the shared fixture/artifact area.
 
 ## Branch First
 
-`main` is the only long-lived branch: the source tree, what installers clone,
-and what releases are cut from. Branch from `main` and open PRs against `main`;
-never push it directly. There is no development symlink layout — every path in
-the tree is the real file.
+`main` is the only branch you develop on: the source tree, what installers
+clone, and what releases are cut from. Branch from `main` and open PRs against
+`main`; never push it directly. There is no development symlink layout — every
+path in the tree is the real file. `claude-plugin`, the plugin claude.ai's
+directory follows, is written only by `Publish Release` (see below); never
+commit to it.
 
 ## Release Workflow
 
@@ -26,6 +28,9 @@ any branch but `release/*`. Releases are two GitHub Actions workflows:
   are bare `0.4.x` tags) + GitHub-Releases that same merged commit with the
   wheel and sdist that went to PyPI attached as release assets, plus the
   plugin ZIP that a person uploads to OpenAI's plugin portal, which has no API.
+  It also commits the plugin alone (manifest, icon, `skills/`, `LICENSE`,
+  README) onto the `claude-plugin` branch, which claude.ai's plugin directory
+  follows (`scripts/release/claude_plugin_branch.py`).
 
 When asked to publish, make, or ship a release, dispatch `Prepare Release` on
 `main`. Never pick the semver bump yourself: if the request does not name patch,
@@ -45,12 +50,13 @@ Skill `requirements.txt` files pin `cadgen==<VERSION>` on `main` itself;
 checkout's editable install reports that same version, so the pin is satisfied
 in development too — install `requirements-dev.txt`, never a skill's
 `requirements.txt` on its own (that fetches the previous release from PyPI).
-`models/` stays on `main` as LFS pointers (`.lfsconfig` excludes it from
-default fetches; `.gitattributes` export-ignores it from archives); nothing
-installs it. `scripts/github-workflows/check-builds.sh` enforces the shipping
-contract on every push: no tracked symlink, no LFS path under `skills/`, no
-skill reaching into a repo root. See the Releases section in `CONTRIBUTING.md`
-for the full flow, the resume path, the rehearsal, and local/manual fallbacks.
+`models/` stays on `main` as plain files; nothing installs it.
+`scripts/github-workflows/check-builds.sh` enforces the shipping contract on
+every push: no tracked symlink, no `.gitattributes` rule that rewrites files at
+checkout or changes the archive (so no Git LFS; claude.ai's plugin directory
+refuses them), every tracked file under 5 MiB, no skill reaching into a repo root.
+See the Releases section in `CONTRIBUTING.md` for the full flow, the resume
+path, the rehearsal, and local/manual fallbacks.
 
 ## Repo Map
 
@@ -174,7 +180,7 @@ for the full flow, the resume path, the rehearsal, and local/manual fallbacks.
 - Create lightweight shared Python packages under `packages/` when a helper
   should not inherit heavier package dependencies.
 - Use path-targeted search, validation, and `git status`; avoid broad scans over
-  generated CAD/LFS artifacts unless the task requires them.
+  generated CAD artifacts unless the task requires them.
 - Treat `VERSION` as the canonical release version. Do not hand-edit duplicate
   package, plugin, lockfile, or Python `pyproject.toml` versions; release
   preparation and `scripts/bundle/bundle.sh` stamp them from the canonical
@@ -189,12 +195,6 @@ for the full flow, the resume path, the rehearsal, and local/manual fallbacks.
 - In Codex or Claude Code worktrees, prefer the skill instructions and scripts
   under the current worktree's `skills/` directory over globally installed
   skill symlinks from another checkout.
-- Hydrate `models/` only when the user asks for it or when the task targets
-  specific files under `models/`. In a new worktree, make the relevant model
-  paths real before using them, preferring the local Git LFS cache with
-  `git lfs checkout <path>` or `git lfs checkout models`. Download missing LFS
-  objects only when explicitly requested or required after confirming the local
-  cache is missing them.
 - Install dependencies only for the workflow being changed.
 - Do not commit `.venv/`, `node_modules/`, caches, `tmp/`, local credentials, or
   printer config.
@@ -240,9 +240,9 @@ In This Repo". Read them before starting, stopping, or debugging a Viewer.
 Never stop an instance you did not start; packaged-runtime checks go
 through `scripts/bundle/bundle.sh`.
 
-## Git And LFS
+## Git
 
-CAD exchange files, generated render/topology assets, and `assets/**` may be
-LFS-tracked. Never disable LFS filters for `git add`, commits, or other
-object-writing operations. Local hooks live in `.githooks` and
+No Git LFS, and every file under 5 MiB: the repository root is the plugin, and
+claude.ai's plugin directory refuses files a filter rewrites at checkout, so
+heavyweight media stays out of the tree. Local hooks live in `.githooks` and
 delegate build checks through `scripts/git-hooks/pre-commit`.

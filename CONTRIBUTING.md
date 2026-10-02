@@ -35,7 +35,7 @@ Push the branch to `origin` and open the pull request against
 ### Development environment
 
 Choose the setup for the environment where the tools and tests will run. Every
-environment needs Git LFS and Python 3.11 or newer. Install Node.js 22 for the
+environment needs Python 3.11 or newer. Install Node.js 22 for the
 packaged runtime, Viewer, `@text-to-cad/core`, or documentation site; Python-only work
 can defer Node until a selected test needs a generated runtime stage.
 
@@ -45,7 +45,6 @@ Use the POSIX shell. On WSL, install dependencies inside the distribution; do
 not reuse a Windows `.venv` or `node_modules` directory across the boundary.
 
 ```bash
-git lfs install
 python3.12 -m venv .venv
 ./.venv/bin/python -m pip install --upgrade pip
 ./.venv/bin/python -m pip install -r requirements-dev.txt
@@ -67,7 +66,6 @@ which runs the repository's checked-in `.sh` entry points just as Windows CI
 does.
 
 ```powershell
-git lfs install
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
@@ -187,7 +185,7 @@ prunes empty destination directories unless `--keep-empty-dirs` is passed.
 Automated tests are self-contained. They must not read, enumerate, build, or
 import sample models from this repository's `models/` directory. Generate the
 smallest fixture needed in a fresh temporary directory, or use a tiny fixture
-committed with the tests; do not rely on existing outputs or LFS downloads.
+committed with the tests; do not rely on existing outputs.
 Repo `tmp/` and system temporary directories are both fine. Give builds their
 own cache store and clean up their processes and files. The shared
 temporary-directory helper retains the Windows cleanup retries used by the suite.
@@ -234,7 +232,7 @@ requested separately. A manual dispatch runs every job.
 
 | Check | Runs for | Coverage |
 | --- | --- | --- |
-| Version Check | every change | canonical version, derived metadata, skill pins |
+| Version Check | every change | canonical version, derived metadata, skill pins, the shipping contract's tree rules |
 | cadgen (Linux/Windows) | cadgen, core, infrastructure | Python engine, daemon, CLI and viewer backend |
 | core-js | core, infrastructure | `@text-to-cad/core` and benchmark helper units |
 | web | web, UI, core, cadgen, infrastructure | UI and web units, the UI browser specs, bundled launch, format/camera browser checks through the backend |
@@ -523,18 +521,23 @@ package (`.claude-plugin/` and `.codex-plugin/` hold the manifests; the plugin's
 skills are `skills/` directly), so whatever is on `main` is what agent
 installers copy.
 
-Three consequences are enforced by `scripts/github-workflows/check-builds.sh`
+Four consequences are enforced by `scripts/github-workflows/check-builds.sh`
 on every push:
 
 - **No tracked symlink, anywhere.** The installers disagree about symlinks and
   one loses data silently: the Skills CLI dereferences them, Claude Code
   preserves them, and Codex `plugin add` drops them with no error at all,
   publishing a skill whose files are simply missing at runtime.
-- **No LFS-tracked path under `skills/`.** Installers clone without git-lfs and
-  receive pointer files. `models/` and `assets/` stay LFS: nothing installs
-  them, `.lfsconfig` excludes them from default fetches (a fresh clone is ~27 MB
-  with `models/` as pointers), and `.gitattributes` export-ignores `models/`
-  from archives.
+- **No `.gitattributes` rule that changes a file on its way to a user.** No
+  `filter`, `ident` or `working-tree-encoding`, which rewrite files at checkout,
+  and no `export-ignore` or `export-subst`, which change the archive. So there
+  is no Git LFS: installers clone without git-lfs and would receive pointer
+  files, and claude.ai's plugin directory validates files as stored and refuses
+  a plugin whose installs could differ.
+- **Every tracked file under 5 MiB.** Every installer clones the whole
+  repository, so a big file costs every user on every install, and claude.ai's
+  plugin directory stops validating at 5 MiB; heavyweight media stays out of
+  the tree.
 - **No skill reaching into a repo root.** `packages/` being present is not
   permission to import from it: the Skills CLI installs `skills/<name>` alone,
   so `../../../packages/` would work in a checkout and break on the first
@@ -591,6 +594,9 @@ Where the built things live instead:
   layout OpenAI's plugin submission portal takes. It is built from the release
   commit and attached to the GitHub Release beside the wheel. See [Submitting
   the plugin to OpenAI](#submitting-the-plugin-to-openai).
+- **The `claude-plugin` branch** is the plugin alone, the folder claude.ai's
+  plugin directory follows. See [Listing the plugin on
+  claude.ai](#listing-the-plugin-on-claudeai).
 - **A checkout** builds its own: run `scripts/bundle/bundle.sh` once after
   cloning (and after pulling changes to `packages/core`); a missing runtime
   fails with a message that says so.
@@ -626,7 +632,8 @@ is involved) and deletes the branch. The merged commit is THE release commit.
    release commit and checks it against the portal's package rules, so a
    package the portal would refuse stops the release before anything
    irreversible. The ZIP is kept as a workflow artifact
-   (`cad-openai-plugin-<version>`).
+   (`cad-openai-plugin-<version>`). `scripts/release/claude_plugin_branch.py
+   --check` does the same for the tree claude.ai's directory gets.
 2. `bundle.sh --clean` — which is where cadgen's whole runtime comes into
    existence, Node builders, snapshot bundle and Viewer client alike, because
    the release commit carries none of it — then `check-builds.sh`, the docs and
@@ -641,9 +648,27 @@ is involved) and deletes the branch. The merged commit is THE release commit.
    `Deploy Docs`, then the `v<VERSION>` tag and the GitHub Release, with the
    wheel and sdist from that same artifact and the plugin ZIP attached as
    release assets (PyPI stays the install channel; the release page is the
-   provenance copy). Nothing is committed or pushed to `main` after the release
-   PR merge: the tag points at the source commit, and `git describe` on `main`
-   is meaningful.
+   provenance copy), and the plugin tree committed onto `claude-plugin`.
+   Nothing is committed or pushed to `main` after the release PR merge: the tag
+   points at the source commit, and `git describe` on `main` is meaningful.
+
+### Listing the plugin on claude.ai
+
+claude.ai's plugin directory treats the folder it follows as the whole plugin,
+so it does not follow `main`: there the monorepo's files, workflows, lockfile
+and binaries would all be held for a reviewer, and every install would copy
+them. It follows the `claude-plugin` branch, which `Publish Release` writes on
+each release: one commit whose tree is `.claude-plugin/plugin.json` and
+`icon.png`, `skills/`, `LICENSE` and `README.md`, with each README link to a
+file outside that tree pointed at the release commit on GitHub. A release whose
+plugin did not change adds no commit. The directory scans each new commit and
+publishes it by the listing's publish setting.
+
+In the developer portal at <https://claude.ai/directory/manage>, the listing's
+**Branch or tag** is `claude-plugin`. The tree is checked against the
+directory's file rules (<https://claude.com/docs/plugins/pre-submission-checklist>)
+by `tests/python/global/test_claude_plugin_branch.py` on every pull request and
+again before each release.
 
 ### Submitting the plugin to OpenAI
 
@@ -857,14 +882,5 @@ as `.venv/`, `node_modules/`, `.vite/`, `dist/`, `tmp/`, or local credentials.
 Generated runtime changes should come from the production-output workflow, not
 manual edits inside generated runtime folders.
 
-CAD exchange files, generated render/topology assets, and `assets/**` may be
-LFS-tracked. Never disable LFS filters for `git add`, commits, or other
-object-writing operations.
-
-`assets/**` holds heavyweight demo GIFs and is excluded from default LFS pulls,
-so lightweight clones do not fetch it. Hydrate it only when you need the demo
-assets locally:
-
-```bash
-git lfs pull --include="assets/**"
-```
+The repository carries no Git LFS and keeps every file under 5 MiB (see the
+shipping contract above), so heavyweight media never goes in the tree.

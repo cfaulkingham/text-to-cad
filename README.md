@@ -1,9 +1,5 @@
 <div align="center">
 
-<img src="assets/text-to-cad-demo.gif" alt="Demo of the CAD skill generating and previewing CAD geometry" width="100%">
-
-<br>
-
 <img src="apps/docs/public/brand/logo-texttocad.png" alt="text-to-cad" width="800">
 
 Give your agent CAD superpowers.
@@ -31,29 +27,6 @@ text-to-cad is a library of agent skills for generating, inspecting, sourcing,
 slicing, and handing off CAD and robot-description artifacts from local project
 files.
 
-<table>
-  <tr>
-    <td width="33%">
-      <a href="./assets/text-to-cad-demo.gif">
-        <img src="./assets/text-to-cad-demo.gif" alt="CAD skill demo showing generated geometry in CAD Viewer" width="100%">
-      </a>
-      <a href="./skills/cad/SKILL.md"><strong>CAD</strong></a>
-    </td>
-    <td width="33%">
-      <a href="./assets/urdf-demo.gif">
-        <img src="./assets/urdf-demo.gif" alt="URDF skill demo showing robot description output in CAD Viewer" width="100%">
-      </a>
-      <a href="./skills/urdf/SKILL.md"><strong>URDF</strong></a>
-    </td>
-    <td width="33%">
-      <a href="./assets/srdf-moveit2-demo.gif">
-        <img src="./assets/srdf-moveit2-demo.gif" alt="SRDF MoveIt2 skill demo showing inverse kinematics in CAD Viewer" width="100%">
-      </a>
-      <a href="./skills/srdf/SKILL.md"><strong>SRDF / MoveIt2</strong></a>
-    </td>
-  </tr>
-</table>
-
 ## 🧰 Skills
 
 Install the library to give agents focused workflows for CAD, fabrication,
@@ -71,15 +44,14 @@ robot description files, simulation, and local review.
 | SendCutSend  | Checks DXF and STEP files before upload to SendCutSend.                                                                                            | [skills/sendcutsend](skills/sendcutsend/SKILL.md)   |
 | DfAM Check   | Measures mesh printability per process: wall thickness, overhangs, support volume, and build orientation.                                          | [skills/dfam-check](skills/dfam-check/SKILL.md)     |
 | DFM | Reviews a part for sheet metal, CNC machining, or injection molding, with measured evidence and the cited rule behind every finding; measures draft, undercuts and projected area from a mesh. | [skills/dfm](skills/dfm/SKILL.md) |
-| G-code       | Slices supported mesh files into validated, printer-profiled FDM `.gcode` with real slicer CLIs.                                                   | [skills/gcode](skills/gcode/SKILL.md)               |
-| Bambu Labs   | Dry-runs, uploads, and cautiously starts local Bambu Lab print jobs from validated `.gcode`.                                                       | [skills/bambu-labs](skills/bambu-labs/SKILL.md)     |
+| G-code       | Slices models into printer-ready G-code with OrcaSlicer, using your own printer presets.                                                           | [skills/gcode](skills/gcode/SKILL.md)               |
+| Bambu Labs   | Sends prints to Bambu Lab printers through Bambu Connect, Bambu Lab's official app, or Bambu Studio.                                               | [skills/bambu-labs](skills/bambu-labs/SKILL.md)     |
 
 ## 💻 Installation
 
 Install or clone from `main`: it is the source tree, and every skill's
 `requirements.txt` pins the `cadgen` release it was published with. (`models/`,
-the fixture corpus, arrives as small LFS pointers and is not needed to use the
-skills.)
+the fixture corpus, is not needed to use the skills.)
 
 ### Skills
 
