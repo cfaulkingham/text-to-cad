@@ -95,7 +95,10 @@ codec and BREP object, it holds that component's **leaf layout** — how many
 leaves the encoded shape has and whether every one sits at the prototype's
 own placement — which canonical publication records as it measures those
 leaves, and which tree composition (§3) reads to name the exact per-leaf box
-keys without decoding the shape. Nothing in the index holds a value
+keys without decoding the shape. For an all-link result past the bounded
+capture it holds each link's bounds (§6): the merge of the leaf boxes the link
+places, keyed by the child tree it links and its exact placement. Nothing in
+the index holds a value
 computed while a model runs (README law 18): a model's own checks and
 operations always execute.
 
@@ -389,7 +392,12 @@ identity. A real one (`link_arm`: a bar plus two placements of a pin model):
   - OCCT's layout is recognised at every record the splice reads.
 
   A forced build exports. Under `--verbose` the stage names which ran:
-  `tree: splice STEP <file>` or `tree: assemble STEP <file>`.
+  `tree: splice STEP <file>` or `tree: assemble STEP <file>`. A parent that
+  will splice assembles no private document before its callback: its bounds
+  merge from its links' (§6), and it assembles a document only for a link
+  whose bounds miss (that link's part alone) or once the splice proves
+  ineligible, after the callback; a pin deleted meanwhile then fails the build
+  before anything is saved.
 
   The spliced file's cold compile is the exported file's, and the composed
   tree binds to it as to any other bytes; `CADGEN_VERIFY_READBACK=1` proves
@@ -976,6 +984,15 @@ Decided mechanically from the returned geometry and occurrence metadata.
   rotated local AABBs and raw native-box merges are not substitutes. Missing,
   corrupt, unsupported or invalid inputs use the ordinary whole-document path;
   forced builds bypass this reuse.
+- An all-link result past that bound takes its bounds from its links. The
+  whole document's bounds are its links' leaf boxes merged, and one link's
+  merge is a function of the child tree it links and its exact placement
+  alone, so it is remembered in `index/bounds` under those two, the algorithm
+  and the kernel's versions (`store.build._bbox_from_links`). Links merge in
+  the order the document's leaf traversal visits them, keeping the first of
+  equal values as it does, so the six numbers, signed zeros included, are the
+  whole document's. A link that misses measures its own part of the document;
+  any failure measures the whole document; forced builds bypass this.
 - The internal source publisher may capture that complete descriptor and its
   verified tree/BREP bytes plus normalized intrinsic face-color recipes before its
   callback. Every unique BREP and exact native placement is validated privately

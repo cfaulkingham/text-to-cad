@@ -538,8 +538,14 @@ def _publish_tree(
     bbox_override: dict[str, list[float]] | None = None,
     appearance: dict[str, Any] | None = None,
     base_appearance: dict[str, Any] | None = None,
+    prepare_bbox_shape: Callable[[], Any] | None = None,
+    link_bounds: Callable[[], dict[str, list[float]] | None] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    """Publish verified geometry inputs before any disposable surface work."""
+    """Publish verified geometry inputs before any disposable surface work.
+
+    ``link_bounds`` answers an all-link result's bounds from its links
+    (:func:`_bbox_from_links`); ``prepare_bbox_shape`` stands in for
+    ``bbox_shape`` when the document a miss measures is prepared on demand."""
     from cadgen._internal.component_package import _bbox_from_shape, validate_geometry_component
 
     occurrences, links = walk.occurrences, walk.links
@@ -608,8 +614,10 @@ def _publish_tree(
         bbox = try_bounds(walk.draft_tree(root_name=root_name))
     if bbox is None and prepared_occurrence_bounds and not force:
         bbox = _bbox_from_prepared_occurrences(walk)
+    if bbox is None and link_bounds is not None and not force:
+        bbox = link_bounds()
     if bbox is None:
-        bbox = _bbox_from_shape(bbox_shape)
+        bbox = _bbox_from_shape(bbox_shape if prepare_bbox_shape is None else prepare_bbox_shape())
     if bbox is not None:
         tree["bbox"] = bbox
     tree["stats"] = {"occurrenceCount": len(occurrences), "linkCount": len(links)}
@@ -635,6 +643,76 @@ def _publish_tree(
 
 
 _PREPARED_OCCURRENCE_BOUNDS_ALGORITHM = "component_bbox.canonical_native_rotation.algorithm1"
+
+#: What :func:`_bbox_from_links` remembers per link: ``_leaf_bounds`` over the
+#: leaves the link places, measured in the parent's document. Change the merge
+#: or the per-leaf measure and change this name with it.
+_LINK_BOUNDS_ALGORITHM = "link_leaves_bbox.occurrence_bbox.optimal.untranslated.v2"
+
+
+def _bbox_from_links(descriptor: dict[str, Any], links: list[dict[str, Any]]) -> dict[str, list[float]] | None:
+    """The bounds ``_bbox_from_shape`` takes of an all-link result's document,
+    without assembling that document.
+
+    The document's leaves are each link's leaves in turn, and every one of a
+    link's leaf boxes is a function of the child tree it links and of its
+    placement alone. So each link's leaves are merged on their own and that
+    merge is remembered in ``index/bounds`` under the child tree and the link's
+    exact placement; only a link that misses assembles its own part of the
+    document. The links are merged in the order ``_world_leaves`` visits them
+    (its stack takes a group's last child first), keeping the first of equal
+    values as its merge does, so the six numbers, signed zeros included, are
+    the whole document's. Anything else, or any failure, answers None and the
+    caller measures the whole document.
+    """
+    from cadgen._internal.component_package import _leaf_bounds
+    from cadgen.store.bounds import cached_box
+    from cadgen.store.materialize import materialize_descriptor
+
+    by_id = {str(link.get("id") or ""): link for link in links}
+    root = (descriptor.get("assembly") or {}).get("root")
+    if not by_id or "" in by_id or not isinstance(root, dict):
+        return None
+    nodes: list[dict[str, Any]] = []
+
+    def visit(node: dict[str, Any]) -> None:
+        if str(node.get("id") or "") in by_id:
+            nodes.append(node)
+            return
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                visit(child)
+
+    visit(root)
+    occurrences = descriptor.get("occurrences") or []
+    owned = {str(node["id"]): [row for row in occurrences
+                               if row["id"] == node["id"] or str(row["id"]).startswith(f"{node['id']}.")]
+             for node in nodes}
+    if len(owned) != len(by_id) or sum(map(len, owned.values())) != len(occurrences):
+        return None
+    boxes: list[list[float]] = []
+    try:
+        for node in reversed(nodes):
+            link_id = str(node["id"])
+            link = by_id[link_id]
+
+            def measure(node: dict[str, Any] = node, rows: list[dict[str, Any]] = owned[link_id]) -> Any:
+                components = descriptor["components"]
+                part = {"components": {row["component"]: components[row["component"]] for row in rows},
+                        "occurrences": rows, "assembly": {"root": node}}
+                box = _leaf_bounds(materialize_descriptor(part, label=str(node.get("name") or node["id"])))
+                return None if box is None else [*box["min"], *box["max"]]
+
+            placement = struct.pack("<16d", *(float(value) for value in link["transform"]))
+            value = cached_box(_LINK_BOUNDS_ALGORITHM, (str(link["tree"]), placement), measure)
+            if value is not None:
+                boxes.append(list(value))
+    except Exception:  # noqa: BLE001 - the whole document stays the exact fallback
+        return None
+    if not boxes:
+        return None
+    return {"min": [min(box[axis] for box in boxes) for axis in (0, 1, 2)],
+            "max": [max(box[axis] for box in boxes) for axis in (3, 4, 5)]}
 
 
 def _bbox_from_prepared_occurrences(walk: _Walk) -> dict[str, list[float]] | None:
@@ -1053,9 +1131,21 @@ def build_tree_through_step(
             shape = decode_geometry_component(prepared["entry"], prepared["payload"])
         own_shapes[cid] = shape
     document = None
-    if snapshot is None:
-        with timed("tree: prepare document"):
-            document = materialize_descriptor(descriptor, shapes=own_shapes, label=root_name)
+
+    def prepare_document() -> Any:
+        nonlocal document
+        if document is None:
+            with timed("tree: prepare document"):
+                document = materialize_descriptor(descriptor, shapes=own_shapes, label=root_name)
+        return document
+
+    # An all-link parent that cadgen's own publisher will try to splice needs
+    # its private document only when its bounds miss or the splice proves
+    # ineligible; spliced with bounds in the index, it is never assembled.
+    splicing = (_internal_source_publication and child_steps is not None and not force
+                and not walk.shapes)
+    if snapshot is None and not splicing:
+        prepare_document()
 
     # This is the FINAL authored result, whether or not a UI is attached.
     # Persistence never substitutes STEP-translated prototypes into this tree.
@@ -1067,6 +1157,8 @@ def build_tree_through_step(
             bbox_override=captured_bbox if snapshot is not None else None,
             appearance=appearance,
             base_appearance=inherited_appearance,
+            prepare_bbox_shape=prepare_document if snapshot is None and splicing else None,
+            link_bounds=(lambda: _bbox_from_links(descriptor, walk.links)) if snapshot is None and splicing else None,
         )
         if not tree_complete(tree_hash):
             raise RuntimeError("source result components disappeared before publication")
@@ -1096,6 +1188,10 @@ def build_tree_through_step(
             # Never resolve a newer pin or consult the authored shapes here.
             with timed("tree: prepare document"):
                 document = prepared_document.materialize(root_name)
+        else:
+            # A splice that proved ineligible: the descriptor's pins, read now.
+            # A pin deleted meanwhile fails here, before anything is saved.
+            prepare_document()
         with timed(f"tree: assemble STEP {step_path.name}"):
             step_path.parent.mkdir(parents=True, exist_ok=True)
             step_hash = export_build123d_step_file(document, step_path, logger=logger)

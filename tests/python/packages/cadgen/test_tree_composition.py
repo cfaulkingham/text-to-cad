@@ -280,6 +280,103 @@ class SplicedStepTest(Fixture):
                 self.assertEqual(stats["documentTree"], self.parsed_document(self.root / f"{name}.step"))
 
 
+class LargeSpliceTest(Fixture):
+    """A parent past the bounded capture, as every large assembly is, takes its bounds from its
+    links and assembles no private document when it splices; when it cannot splice, it assembles
+    the document after its callback (STORE.md §3, spliced documents)."""
+
+    @staticmethod
+    def large():
+        from cadgen.store import _descriptor_bounds
+
+        return mock.patch.object(_descriptor_bounds, "capture_links",
+                                 side_effect=_descriptor_bounds.Ineligible("a large assembly"))
+
+    def counting(self):
+        from cadgen.store import materialize
+
+        sizes = []
+        original = materialize.materialize_descriptor
+
+        def counted(descriptor, **kwargs):
+            sizes.append(len(descriptor.get("occurrences") or []))
+            return original(descriptor, **kwargs)
+
+        return sizes, mock.patch.object(materialize, "materialize_descriptor", side_effect=counted)
+
+    def test_link_bounds_are_the_whole_document_bounds(self):
+        import json
+
+        import build123d as bd
+
+        from cadgen._internal.component_package import _bbox_from_shape
+        from cadgen.coordination import resolve
+        from cadgen.store import bounds as stored
+        from cadgen.store import build
+        from cadgen.store.materialize import materialize_descriptor
+        from cadgen.store.trees import flatten_tree
+
+        rng = random.Random(7)
+        shapes = {
+            "translated": self.parent([(self.a_hash, bd.Location((rng.uniform(-50, 50), 0.1, -0.0))),
+                                       (self.b_hash, bd.Location((-0.0, rng.uniform(-9, 9), 3.3)))]),
+            "grouped": self.parent(grouped=True),
+            "rotated": self.parent([(self.b_hash, bd.Location((1, 2, 3), (0, 90, 0))),
+                                    (self.a_hash, bd.Location((rng.uniform(0, 1), 5, 6), (13, 27, 41)))]),
+        }
+        for label, shape in shapes.items():
+            with self.subTest(label):
+                walk = build._walk_compound(shape, root_name="parent", progress=resolve(None))
+                descriptor = flatten_tree(walk.draft_tree(root_name="parent"))
+                expected = json.dumps(_bbox_from_shape(materialize_descriptor(descriptor, label="parent")))
+                for state in ("measured", "remembered", "read back"):
+                    if state == "read back":
+                        stored.clear()
+                    self.assertEqual(json.dumps(build._bbox_from_links(descriptor, walk.links)), expected, state)
+
+    def test_a_spliced_large_parent_assembles_no_document(self):
+        import build123d as bd
+
+        from cadgen.store import build
+
+        def shape(z):
+            return self.parent([(self.a_hash, bd.Location((0.1, 0.2, z))), (self.b_hash, bd.Location((7.3, -2.2, 0.0)))])
+
+        shapes = [shape(0.375), shape(0.625), shape(0.625), shape(0.625)]
+        sizes, counted = self.counting()
+        with self.large(), counted:
+            first = self.build(shapes[0], name="large", steps=self.steps)
+            self.assertTrue(first[2]["stepSpliced"])
+            # Measured link by link the first time (19 occurrences in all), never as a whole.
+            self.assertEqual(sorted(sizes), [6, 13])
+            sizes.clear()
+            moved = self.build(shapes[1], name="large", steps=self.steps)
+            # A moved link measures its own part only; the other link's bounds are remembered.
+            self.assertEqual(sizes, [6])
+            sizes.clear()
+            again = self.build(shapes[2], name="large", steps=self.steps)
+            self.assertEqual(sizes, [])
+            self.assertEqual(again[0], moved[0])
+            # The tree, its bounds included, is the one the whole document gives.
+            with mock.patch.object(build, "_bbox_from_links", return_value=None):
+                whole = self.build(shapes[3], name="large", steps=self.steps)
+            self.assertEqual(sizes, [19])
+        self.assertEqual(whole[0], moved[0])
+        self.assertEqual(whole[1]["bbox"], moved[1]["bbox"])
+
+    def test_a_large_parent_that_cannot_splice_assembles_its_document_once(self):
+        import build123d as bd
+
+        shape = self.parent([(self.a_hash, bd.Location((1, 2, 3), (0, 90, 0)))])
+        sizes, counted = self.counting()
+        logger = self.verbose_logger()
+        with self.large(), counted:
+            _, _, stats, _ = self.build(shape, name="large_rotated", logger=logger, steps=self.steps)
+        self.assertFalse(stats["stepSpliced"])
+        self.assertEqual(sizes.count(6), 2, sizes)  # its link's bounds, then the document it exports
+        self.assertEqual(stats["documentTree"], self.parsed_document(self.root / "large_rotated.step"))
+
+
 class PinnedChildStepsTest(unittest.TestCase):
     def test_only_a_record_that_still_pins_the_tree_resolves_its_saved_step(self):
         from cadgen._internal.generation import _pinned_child_steps
