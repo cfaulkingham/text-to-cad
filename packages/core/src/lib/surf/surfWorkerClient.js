@@ -492,6 +492,10 @@ export function loadSurfComponentInWorker(url, {
         surfaceInput, surfaceObject, tessellation: tessellation || {},
       }));
       if (completeDisplay) { post(cachedEntry); return; }
+      // Nothing names this component's SURF yet (a part that opened warm, refined before its surface
+      // was resolved): fail as the inline path does, and the caller resolves one and asks again. A
+      // ticket for "" read the page's own address, which in the CAD app is a tunnelled 404.
+      if (!url) { fail(new Error("Exact SURF bytes are not ready for this component")); return; }
       post(cachedEntry, null, () => resources.workerTicket(url, { signal }));
     };
     if (readEntry) {

@@ -30,7 +30,9 @@ The worker never receives a service function or detaches an admitted cache
 buffer. SURF byte tickets are acquired only after reserving a worker slot, so
 queued components cannot accumulate eagerly transferred buffers. Recognition reads are limited to 16 MiB. SURF display-cache hits inspect
 the cached header before requesting a resource ticket, preserving zero-SURF-read
-warm rendering. Aborting a worker request retains the existing scheduler and
+warm rendering. A miss with no SURF URL yet (a part that opened warm, before its
+surface is resolved) fails as not ready and requests no ticket; the caller resolves
+the surface and asks again. Aborting a worker request retains the existing scheduler and
 owner rules in [resource ownership](resource-ownership.md).
 
 Each service wraps its provider in an opaque cache generation. URL-addressed

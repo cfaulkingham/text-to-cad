@@ -915,3 +915,26 @@ test('custom resource transfers begin only when a worker slot is reserved', asyn
   }
   await Promise.all(pending);
 });
+
+// A part that opened from the tessellation cache has no SURF URL until its surface is resolved, and
+// the viewport's refinement asks for its next level with that empty URL first, the cache being the
+// cheap way there. A miss used to hand the worker a ticket for "", which read the page's own
+// address: in the CAD app, a cad_http GET of its sandbox page, answered 404 (43 per hypercar open).
+test("a miss with no SURF URL fails as not ready, reading nothing", async (t) => {
+  const created = [];
+  class FakeWorker {
+    constructor() { this.messages = []; created.push(this); }
+    addEventListener() {}
+    postMessage(message) { this.messages.push(message); }
+    terminate() {}
+  }
+  setTessellationCacheProvider({ async probeMany(keys) { return keys.map(() => null); }, async getProbed() { return null; }, async put() {} });
+  const savedWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker;
+  t.after(() => { reclaimIdleSurfWorkers(); globalThis.Worker = savedWorker; setTessellationCacheProvider(null); });
+  const tickets = [];
+  const resources = { workerTicket: (url) => { tickets.push(url); return Promise.resolve({ kind: "url", url }); } };
+  await assert.rejects(loadSurfComponentInWorker("", { resources, identity: CACHE_IDENTITY }), /not ready/);
+  assert.deepEqual(tickets, [], "no ticket for an empty URL");
+  assert.deepEqual(created.flatMap((worker) => worker.messages), [], "no worker was asked");
+});
