@@ -110,6 +110,34 @@ class ResultWorker:
         yield {"exit": 1 if self.fail else 0}
 
 
+class AskingWorker:
+    """A job that asks before each of its derivations (worker._wanted), each after a step."""
+    pid = 998
+    extra = False
+
+    def __init__(self, *steps):
+        self.steps, self.answers, self.killed = steps, [], False
+
+    def send(self, request):
+        if request.get("kind") == "artifactNext":
+            self.answers.append(request["goOn"])
+        else:
+            self.request = request
+
+    def alive(self):
+        return not self.killed
+
+    def kill(self):
+        self.killed = True
+
+    def frames(self, **kwargs):
+        for step in self.steps:
+            step()
+            yield {"artifactNext": True}
+        yield {"artifactResult": artifacts.result_frame(self.request["artifact"], {})}
+        yield {"exit": 0}
+
+
 class ArtifactRequests(unittest.TestCase):
     def test_closed_requests_are_owned_sorted_and_include_every_pin_in_the_key(self):
         request = surface_request(cids=["c" * 16, "b" * 16])
@@ -293,6 +321,53 @@ class ArtifactCoalescing(unittest.TestCase):
         pool.release.assert_called_once_with(running, healthy=True)
         self.assertEqual(late.frames[-1], {"exit": 0})
         self.assertEqual(sorted(job["state"] for job in ledger.snapshot()), ["done", "done"])
+        self.assertEqual(registry.snapshot()["inflight"], 0)
+
+    def test_a_cancelled_artifact_job_stops_before_its_next_derivation(self):
+        # Asked before each derivation, the supervisor says go on while the caller listens or
+        # an identical request has attached, and stop once neither does: a request the browser
+        # left no longer holds its worker for the rest of its components. Nothing is killed.
+        registry, ledger, pool = broker.Broker(1), JobLedger(), mock.Mock()
+        request = {"tool": "artifact", "argv": [], "artifact": surface_request(), "store_root": "/store/a"}
+        owner, other = Connection(), Connection()
+        attached, detached = threading.Event(), threading.Event()
+        claim, detach = registry.claim_artifact_entry, registry.detach
+
+        def claiming(*args, **kwargs):
+            owned, entry = claim(*args, **kwargs)
+            if not owned:
+                attached.set()
+            return owned, entry
+
+        def detaching(entry):
+            orphaned = detach(entry)
+            detached.set()
+            return orphaned
+
+        with mock.patch.object(server, "_BROKER", registry), mock.patch.object(server, "_JOBS", ledger), \
+             mock.patch.object(server, "_POOL", pool), mock.patch.object(server, "_log"), \
+             mock.patch.object(server, "_watch_client"), \
+             mock.patch.object(registry, "claim_artifact_entry", side_effect=claiming), \
+             mock.patch.object(registry, "detach", side_effect=detaching), \
+             concurrent.futures.ThreadPoolExecutor(1) as executor:
+            follower = []
+
+            def owner_leaves_as_another_attaches():
+                owner.disconnected.set()
+                follower.append(executor.submit(server._handle_request, other, request))
+                attached.wait()
+
+            def the_other_leaves():
+                other.disconnected.set()
+                detached.wait()
+
+            running = AskingWorker(lambda: None, owner_leaves_as_another_attaches, the_other_leaves)
+            pool.acquire.return_value = running
+            server._handle_request(owner, request)
+            follower[0].result()
+        self.assertEqual(running.answers, [True, True, False])
+        self.assertFalse(running.killed)
+        pool.release.assert_called_once_with(running, healthy=True)
         self.assertEqual(registry.snapshot()["inflight"], 0)
 
     def test_a_model_build_whose_client_left_is_still_stopped(self):
@@ -510,7 +585,8 @@ class ArtifactLeases(unittest.TestCase):
             self.assertEqual(self.private.broker.snapshot()["running"], 1)
         self.assertEqual(self.settled()["peakRunning"], 1)
         self.fake.derive.assert_called_once_with("a" * 64, ["b" * 16, "c" * 16], producer=PRODUCER,
-                                               expected_objects={"d" * 64: "e" * 64}, force=False)
+                                               expected_objects={"d" * 64: "e" * 64}, force=False,
+                                               keep_going=None)
 
     def test_worker_source_isolation_and_failure_release_real_lease(self):
         readable = Path(self.root) / "unrelated.py"
@@ -856,7 +932,7 @@ raise SystemExit(artifacts._main())
             with self.assertRaises(artifacts.ArtifactDetached):
                 first.result()
             # The supervisor notices its client leave, and the worker keeps the job: an
-            # artifact job always finishes (it writes the store), whoever is still waiting.
+            # artifact job is never killed for its caller, and goes on while another waits.
             noticed.wait()
             self.assertTrue(entry["ownerActive"], "the producing request was abandoned")
             self.assertFalse(running.killed)
@@ -869,6 +945,35 @@ raise SystemExit(artifacts._main())
         pool.acquire.assert_called_once_with("", dependency=False)
         self.assertFalse(running.killed)
         self.assertEqual(self.settled()["peakRunning"], 1)
+
+
+class SupervisedDerivation(unittest.TestCase):
+    def test_a_daemon_job_asks_before_each_derivation_and_ends_at_the_first_no(self):
+        # The worker's half of the question the supervisor answers above, on real derivations:
+        # told yes then no, the job derives one component and ends with it, exit 0.
+        private = broker.PrivateBroker(1)
+        self.addCleanup(private.close)
+        temp = generated_cad_directory(prefix="artifact-asks-")
+        self.addCleanup(temp.cleanup)
+        root = str(Path(temp.name).resolve())
+        self.enterContext(mock.patch.dict(os.environ, {**private.env(), "CADGEN_CACHE_DIR": root, "CADGEN_DAEMON": "0"}))
+        from build123d import Box, Compound, Pos
+        from cadgen.store import surfaces
+        from cadgen.store.build import build_tree_from_compound
+
+        parts = Compound(children=[Pos(20 * index, 0, 0) * Box(1 + index, 2, 3) for index in range(3)])
+        tree, descriptor, _ = build_tree_from_compound(parts, root_name="parts")
+        producer, cids = surfaces.producer_identity(), sorted(descriptor["components"])
+        request = {"tool": "artifact", "argv": [], "store_root": root,
+                   "artifact": {"kind": "surfaces", "tree": tree, "cids": cids, "producer": producer}}
+        answers = io.StringIO('{"kind": "artifactNext", "goOn": true}\n{"kind": "artifactNext", "goOn": false}\n')
+        frames = []
+        with mock.patch.object(worker, "_emit", side_effect=frames.append), mock.patch.object(sys, "stdin", answers):
+            self.assertEqual(worker._run(request, supervised=True), 0)
+        self.assertEqual(frames[:2], [{"artifactNext": True}] * 2)
+        self.assertEqual(list(frames[2]["artifactResult"]["result"]), cids[:1])
+        self.assertEqual([surfaces.lookup(descriptor["components"][cid], producer) is not None for cid in cids],
+                         [True, False, False])
 
 
 if __name__ == "__main__":

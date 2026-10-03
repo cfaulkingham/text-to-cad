@@ -1435,10 +1435,15 @@ components. Surface requests use the shared artifact-job admission and one
 private derivation per requested component; they have no model binding,
 declared output or editing-producer order. Their time and memory remain real
 work, charged when a display or selector first requires them. On the daemon,
-an artifact job runs to its end when its caller leaves, as the CAD Viewer's do
-routinely: its result lands in the store, an identical request attaches to it
-meanwhile, and the worker stays warm rather than being killed and replaced by a
-fresh kernel import. A build or a door whose caller leaves is stopped.
+an artifact job is never killed when its caller leaves, as the CAD Viewer's do
+routinely: the worker stays warm rather than being replaced by a fresh kernel
+import. Before each derivation the worker asks its supervisor whether anyone
+still wants the job: its caller, or an identical request that attached to it
+since. When no one does, the job ends with what it has derived, all of it in
+the store, and a later identical request starts its own job, which finds those
+there. One that ran to its end instead kept its worker busy for the rest of a
+64-component request while the next model's request waited for a kernel
+import. A build or a door whose caller leaves is stopped.
 
 **Browser resources.** Disposable decoded meshes, selectors, BVHs, GPU buffers,
 textures and worker work may have byte budgets and be reclaimed when unused.

@@ -13,6 +13,9 @@ carries build-tree events (STORE.md §Lazy children): a child a model's body sub
 from inside this worker reports through the same channel as the worker's own output.
 A fourth, ``{"heartbeat": {"phase": ..., "cpu": ...}}``, is the worker's liveness
 while a job runs (``_heartbeat``); the supervisor consumes it and never relays it.
+A fifth, ``{"artifactNext": true}``, is an artifact job asking before each derivation
+whether anyone still wants it (``_wanted``); the supervisor answers ``{"goOn": ...}``
+on stdin and never relays it.
 
 One request kind, ``run`` — a CLI tool, output streamed as frames. The store root
 arrives on every request (``store_root``) and is applied per job, so one daemon serves
@@ -235,10 +238,10 @@ def _warm_imports() -> None:
         kernel_versions()
 
 
-def _run(request: dict) -> int:
+def _run(request: dict, *, supervised: bool = False) -> int:
     tool = request.get("tool")
     if tool == "artifact":
-        return _run_artifact(request)
+        return _run_artifact(request, supervised=supervised)
     argv = [str(a) for a in request.get("argv") or []]
     cwd = request.get("cwd")
     prog = str(request.get("prog") or "") or None
@@ -285,8 +288,26 @@ def _run(request: dict) -> int:
         _evict_first_party_modules()
 
 
-def _run_artifact(request: dict) -> int:
-    """A typed operation has no parser, script path, declared outputs or hygiene scan."""
+def _wanted() -> bool:
+    """Whether anyone still wants this artifact job's next derivation, asked of the supervisor.
+
+    The answer is one line on stdin, the channel the job came on: the supervisor sends it
+    before anything else (``server._handle_request``). It says no once the job's caller has
+    left and no identical request has attached meanwhile, as when the CAD Viewer leaves a
+    model, and the job then ends with what it has derived, its worker warm. No answer, a
+    supervisor gone, is no."""
+    _emit({"artifactNext": True})
+    try:
+        return json.loads(sys.stdin.readline())["goOn"] is True
+    except (ValueError, KeyError, TypeError):
+        return False
+
+
+def _run_artifact(request: dict, *, supervised: bool = False) -> int:
+    """A typed operation has no parser, script path, declared outputs or hygiene scan.
+
+    ``supervised``: a daemon worker's job (``serve``), which asks before each derivation
+    whether anyone still wants it. A one-shot transient worker has nobody to ask."""
     from cadgen.daemon import artifacts, broker
 
     out, err = _FrameWriter("stdout"), _FrameWriter("stderr")
@@ -301,7 +322,8 @@ def _run_artifact(request: dict) -> int:
             raise RuntimeError("artifact worker store does not match its request")
         with broker.held(f"artifact:{operation['kind']}", required=True), artifacts.worker_context(root), \
              contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            result = artifacts.result_frame(operation, artifacts.execute(operation))
+            result = artifacts.result_frame(
+                operation, artifacts.execute(operation, keep_going=_wanted if supervised else None))
             _emit({"artifactResult": result})
         return 0
     except BaseException:  # the worker stays reusable, but no success is emitted
@@ -351,7 +373,7 @@ def serve() -> int:
         else:
             _apply_request_env(request)
             with _heartbeat():
-                code = _run(request)
+                code = _run(request, supervised=True)
             _emit({"exit": code, "pid": os.getpid()})
     return 0
 
