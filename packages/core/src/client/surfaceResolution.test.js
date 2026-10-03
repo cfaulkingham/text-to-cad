@@ -132,8 +132,8 @@ test("abort detaches only the known surface subscriber", async (t) => {
   const pending = resolveSurfaceComponents(descriptor, [{ cid: "part", surfaceInput: D }], {
     signal: controller.signal,
   });
-  // The job id only exists once the first poll has answered; abort before that and
-  // there is nothing to detach.
+  // The job id only exists once the first poll has answered (an abort before that waits
+  // for the answer: the next test); abort while a later poll waits.
   await firstPoll;
   controller.abort();
   await assert.rejects(pending, (error) => error.name === "AbortError");
@@ -141,6 +141,30 @@ test("abort detaches only the known surface subscriber", async (t) => {
   assert.deepEqual(calls.at(-1), {
     url: "/__cad/surfaces/cancel", body: { job: "job-cancel" },
   });
+});
+
+test("an abort while the first post is in flight cancels the job its answer opens", async () => {
+  // A first post aborted in flight would never learn its token, and the server would go on
+  // deriving for nobody until the subscriber expired. So it is let finish, and cancelled then.
+  const controller = new AbortController();
+  const cancels = [];
+  let posted, answer;
+  const firstPost = new Promise((resolve) => { posted = resolve; });
+  const client = {
+    // As fetch does: an abort rejects a request in flight.
+    requestSurfaces: (_body, { signal } = {}) => new Promise((resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      answer = () => resolve({ viewId: VIEW, components: { part: { surfaceInput: D, state: "pending", job: "job-early" } } });
+      posted();
+    }),
+    cancelSurfaceRequest: async (body) => { cancels.push(body); },
+  };
+  const pending = resolveSurfaceComponents(descriptor, [{ cid: "part", surfaceInput: D }], { client, signal: controller.signal });
+  await firstPost;
+  controller.abort();
+  answer();
+  await assert.rejects(pending, (error) => error.name === "AbortError");
+  assert.deepEqual(cancels, [{ job: "job-early" }]);
 });
 
 test("failed, replacement and mismatched ready responses never produce tickets", async (t) => {
@@ -186,7 +210,8 @@ test("independent renderer clients bind surface tickets to their own backend ori
   assert.equal(calls.length, 2);
   for (let i=0; i<2; i++) {
     assert.equal(new URL(results[i].get("part").surfUrl).origin, clients[i].origin);
-    assert.equal(calls[i].signal, controller.signal);
+    // A first post is never aborted in flight (its answer carries the token a cancel needs).
+    assert.equal(calls[i].signal, undefined);
     assert.equal(calls[i].body.viewId, VIEW);
   }
 });

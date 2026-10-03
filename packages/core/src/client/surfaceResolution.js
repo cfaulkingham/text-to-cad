@@ -132,6 +132,13 @@ export async function resolveSurfaceComponents(descriptor, requested, { signal, 
   }
 }
 
+/** The subscriber token a surface response names, on the response or on a pending row. */
+function subscriberToken(payload) {
+  if (payload?.job) return String(payload.job);
+  const rows = payload?.components && typeof payload.components === "object" ? Object.values(payload.components) : [];
+  return String(rows.find((row) => row?.job)?.job || "");
+}
+
 async function resolveSurfaceRequest(descriptor, requested, { signal, client, onReady = null }) {
   const tree = digest(descriptor?.tree, "surface tree");
   const viewId = digest(descriptor?.viewId, "surface viewId");
@@ -162,7 +169,15 @@ async function resolveSurfaceRequest(descriptor, requested, { signal, client, on
   try {
     for (;;) {
       if (signal?.aborted) throw abortError();
-      const payload = await guardedPost("/__cad/surfaces", { ...base, ...(job ? { job } : {}) }, { signal, client });
+      // A first post (no token yet) is not aborted in flight: its answer, which comes at once,
+      // carries the token a cancel needs. Aborted there, the server would go on deriving for a
+      // view nobody watches until its subscriber expired, its daemon job with it.
+      const payload = await guardedPost("/__cad/surfaces", { ...base, ...(job ? { job } : {}) },
+        { signal: job ? signal : undefined, client });
+      if (signal?.aborted) {
+        job ||= subscriberToken(payload);
+        throw abortError(); // the finally cancels the job, its token now known
+      }
       if (!payload || payload.viewId !== viewId || !payload.components
           || typeof payload.components !== "object" || Array.isArray(payload.components)) {
         throw new Error("Surface response does not belong to the requested view");
@@ -177,10 +192,6 @@ async function resolveSurfaceRequest(descriptor, requested, { signal, client, on
       if (responseJob) {
         if (job && job !== responseJob) throw new Error("Surface request changed subscriber token");
         job = responseJob;
-        if (signal?.aborted) {
-          cancel();
-          throw abortError();
-        }
       }
       const ready = new Map();
       let pending = false;
