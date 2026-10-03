@@ -65,6 +65,12 @@ class Connection:
             self.sent.wait_for(lambda: self.frames)
             return self.frames[0]
 
+    def frame_with(self, key):
+        """The first frame sent to this client that carries ``key``, once one has been."""
+        with self.sent:
+            self.sent.wait_for(lambda: any(key in frame for frame in self.frames))
+            return next(frame for frame in self.frames if key in frame)
+
     def recv(self, timeout=None):
         if self.disconnected.is_set():
             return b""
@@ -230,10 +236,7 @@ class ArtifactCoalescing(unittest.TestCase):
             owner = executor.submit(server._handle_request, first, request)
             self.assertTrue(running.ready.wait(3))
             follower = executor.submit(server._handle_request, second, request)
-            deadline = time.monotonic() + 3
-            while not any("artifactResult" in frame for frame in second.frames) and time.monotonic() < deadline:
-                time.sleep(.005)
-            self.assertTrue(any("artifactResult" in frame for frame in second.frames))
+            self.assertIn("artifactResult", second.frame_with("artifactResult"))
             self.assertFalse(follower.done(), "result does not replace eventual completion")
             running.finish.set()
             owner.result(5)
@@ -827,8 +830,18 @@ raise SystemExit(artifacts._main())
                 thread.start()
 
         log, noticed = noticing_log()
+        # The second request joining the first's entry, awaited rather than polled for.
+        coalesced, claim = threading.Event(), self.private.broker.claim_artifact_entry
+
+        def claiming(request, **kwargs):
+            owned, entry = claim(request, **kwargs)
+            if not owned:
+                coalesced.set()
+            return owned, entry
+
         with mock.patch.object(server, "_BROKER", self.private.broker), mock.patch.object(server, "_JOBS", ledger), \
              mock.patch.object(server, "_POOL", pool), mock.patch.object(server, "_log", side_effect=log), \
+             mock.patch.object(self.private.broker, "claim_artifact_entry", side_effect=claiming), \
              mock.patch.object(client, "_connect_or_spawn", side_effect=lambda _: transport.connect(address, self.private.key)), \
              mock.patch("cadgen.daemon.executors.use_daemon", return_value=True):
             acceptor = threading.Thread(target=serve_two, daemon=True)
@@ -836,9 +849,7 @@ raise SystemExit(artifacts._main())
             first = artifacts.submit_artifact({"kind": "producer"}, store_root=self.root)
             self.assertTrue(running.ready.wait(3))
             second = artifacts.submit_artifact({"kind": "producer"}, store_root=self.root)
-            deadline = time.monotonic() + 3
-            while self.private.broker.snapshot()["coalesced"] != 1 and time.monotonic() < deadline:
-                time.sleep(.005)
+            coalesced.wait()
             self.assertEqual(self.private.broker.snapshot()["coalesced"], 1)
             entry = next(iter(self.private.broker._inflight.values()))
             self.assertTrue(first.detach())
