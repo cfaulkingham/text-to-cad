@@ -41,7 +41,7 @@ import { cos, sin } from "./trig.js";
 // cadgen/store/meshes.py, which is the one that builds and validates the key —
 // bumping only the first leaves the store rejecting every entry the new
 // algorithm writes.
-export const TESSELLATION_VERSION = 7;
+export const TESSELLATION_VERSION = 8;
 
 export const DEFAULT_OPTIONS = {
   // Max 3D distance between the surface and a triangle edge midpoint,
@@ -118,6 +118,9 @@ function sampleLoopPolygon(face, loop, floats, tolerance, sharedEdges) {
         else if (Math.abs(uv[d] - hi) <= epsilon) uv[d] = hi;
       }
     }
+    // An edge that is one point in this face's parameters (one shorter than its
+    // Float32 pcurve can resolve) adds no segment: its neighbours meet there.
+    if (segment.every((uv) => uv[0] === segment[0][0] && uv[1] === segment[0][1])) continue;
     if (!forward) {
       segment.reverse();
       fractions?.reverse();
