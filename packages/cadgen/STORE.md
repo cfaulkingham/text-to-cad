@@ -751,10 +751,12 @@ assembly's STEP is hundreds of megabytes. A later evaluation stats each file and
 reuses the verdict while the file keeps the identity (device, inode, size, mtime,
 ctime) observed around its verified read, under §10's settled-stamp rule.
 Deleting, replacing, truncating or rewriting a file verifies that file again,
-and only it: an object still at its verified identity is taken on that
+and for an object every tree above it in the closure, each read again to walk
+its links: a component still at its verified identity is taken on that
 identity, and a linked tree whose whole closure holds is taken as verified, so
 a child another process rebuilt costs the parent's next evaluation that
-child's closure and the parent's own tree, and clause 4 reads nothing clause 3
+child's closure and every tree above it, the parent's own among them, and
+clause 4 reads nothing clause 3
 just verified (§10). A build's own checks of its saved document and sidecar — before the body
 runs, before it publishes, after its rename — read through the same memo, and
 a document the build renames into place is remembered by the digest its writer
