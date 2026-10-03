@@ -518,6 +518,8 @@ export function useRendererShell({
     autoplay, setAutoplay, playback, setPlayback,
     // Deliver a prompt context through the host, reporting a failure as the viewport's alert.
     reportActionError, deliverPrompt, requestRender: () => viewerRef.current?.requestRender?.(),
+    // A frame that keeps the shadow maps, for what moves and reshapes no shadow caster (a highlight).
+    requestFrame: () => viewerRef.current?.requestFrame?.(),
     // The scene moved its own bounds: lighting, shadows and the floor follow, with no React render.
     syncSceneBounds: () => viewerRef.current?.syncSceneBounds?.(),
     // State the renderer keeps outside React changed: write the record soon (and on unmount).

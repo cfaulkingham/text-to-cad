@@ -914,6 +914,12 @@ export function useViewerRuntime({
           interactionState.shadowsDirty = true;
           requestRender();
         },
+        // A frame for a change that moves, shows, hides and reshapes no shadow caster (a
+        // highlight's colour, an overlay, the floor shadow's deferred bake): the shadow maps
+        // it has are kept, as on a frame that only moved the camera.
+        requestFrame: () => {
+          requestRender();
+        },
         invalidateShadows: () => {
           interactionState.shadowsDirty = true;
         },

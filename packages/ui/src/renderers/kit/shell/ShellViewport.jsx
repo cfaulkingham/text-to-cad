@@ -37,6 +37,7 @@ import {
 } from "../camera/zoomSpeeds.js";
 import { loadStudioScene, studioScene } from "../look/renderStudioChunk.js";
 import { DEFAULT_LIGHTING, syncRuntimeScaledLightingAndShadow, updateGridHelper, updateStageEffects } from "../look/stageEffects.js";
+import { CONTACT_SHADOW_HEIGHT_INTERVAL_MS, stageFitCurrent, stageFitInputs } from "../look/stageFollow.js";
 import { createStudioEnvironmentCache } from "../look/studioEnvironmentCache.js";
 import { isKitScene } from "../scene.js";
 import LoadingIndicator from "../status/LoadingIndicator.js";
@@ -48,6 +49,7 @@ import { createViewUpdateGate } from "../view-settings/viewUpdateGate.js";
 import { viewerTransitionBackdrop } from "../viewport/framePresentation.js";
 import { IDLE_PIXEL_RATIO_CAP, INTERACTION_IDLE_DELAY_MS, INTERACTION_PIXEL_RATIO_CAP, getPixelRatioCap } from "../viewport/pixelRatio.js";
 import { disposeSceneObject } from "../viewport/sceneObjects.js";
+import { requestSceneFrame } from "../viewport/sceneFrames.js";
 import { renderThumbnail } from "../viewport/thumbnail.js";
 import { useViewerRuntime } from "../viewport/useViewerRuntime.js";
 import ViewportError from "../status/ViewportError.jsx";
@@ -261,7 +263,11 @@ const ShellViewport = forwardRef(function ShellViewport({
     // routine never rescales the ground under the model. Its lights and its height follow the model.
     const studioState = studio.applyPhotographicStudio(runtime.THREE, runtime, configuration, {
       bounds, groundBounds: runtime.zeroPoseBounds || null,
-      sceneScale: normalizedSceneScaleMode, shadowMapSize: renderShadowMapSizeRef.current
+      sceneScale: normalizedSceneScaleMode, shadowMapSize: renderShadowMapSizeRef.current,
+      // While a routine plays or a pose is dragged, the floor shadow's heights are measured at
+      // most this often (its cast shadow still follows every frame), and once more at rest, in
+      // a frame of their own that keeps the shadow maps.
+      contactShadow: { heightInterval: CONTACT_SHADOW_HEIGHT_INTERVAL_MS, requestFrame: () => runtime.requestFrame?.() }
     });
     runtime.photographicGroundZ = Number.isFinite(Number(studioState?.ground?.position?.z))
       ? Number(studioState.ground.position.z) : null;
@@ -384,6 +390,8 @@ const ShellViewport = forwardRef(function ShellViewport({
     },
     activateViewPlaneFace,
     requestRender() { runtimeRef.current?.requestRender?.(); },
+    // A frame that keeps the shadow maps: for a highlight, which moves and reshapes no caster.
+    requestFrame() { requestSceneFrame(runtimeRef.current, false); },
     getPerspective() {
       return readScopedPerspectiveSnapshot(runtimeRef.current, {
         modelKey, sceneScaleMode: normalizedSceneScaleMode, coordinateSystem: STORED_CAMERA_COORDINATES
@@ -526,7 +534,7 @@ const ShellViewport = forwardRef(function ShellViewport({
         camera.lookAt(runtime.controls.target);
         runtime.controls.update?.();
         emitPerspectiveChange(runtime);
-        runtime.requestRender?.();
+        requestSceneFrame(runtime, false);
       }
       return;
     }
@@ -549,7 +557,8 @@ const ShellViewport = forwardRef(function ShellViewport({
     runtime.controls.update?.();
     emitPerspectiveChange(runtime);
     runtime.scheduleIdleQuality?.();
-    runtime.requestRender?.();
+    // A lens is a camera change: the shadow maps are kept.
+    requestSceneFrame(runtime, false);
   }, [focalLength, renderMode, viewerReadyTick]);
 
   useEffect(() => {
@@ -828,7 +837,9 @@ const ShellViewport = forwardRef(function ShellViewport({
     runtime.zeroPoseBounds = framingBounds;
     const framingRadius = boundsModelRadius(THREE, framingBounds, normalizedSceneScaleMode);
     const modelOffset = modelTransformRef.current.offset;
-    const radius = fitStageToSceneRef.current(runtime, scene);
+    const stageFit = stageFitInputs(fitStageToSceneRef.current, scene, modelOffset?.toArray?.());
+    const radius = stageFit.fit(runtime, scene);
+    runtime.stageFit = stageFit;
     modelGroup.position.copy(modelOffset);
     modelGroup.updateMatrixWorld(true);
     syncRuntimeCameraClipPlanes(runtime, Math.max(radius / 1200, 0.01), Math.max(radius * 600, 2000));
@@ -966,10 +977,16 @@ const ShellViewport = forwardRef(function ShellViewport({
     if (!cameraCurrent) queueMicrotask(() => { if (runtimeRef.current === runtime) adoptSceneRef.current(runtime); });
     return true;
   }, []);
+  // A scene pass says where the scene is now. The stage follows only a scene that moved: a pass
+  // that moved nothing (a pose pass a hover re-ran, a routine's frame that holds still) refits
+  // nothing and leaves the shadow maps as they are.
   const syncSceneBounds = useCallback(() => {
     const runtime = runtimeRef.current;
     if (!runtime?.kitScene) return;
-    fitStageToSceneRef.current(runtime, runtime.kitScene);
+    const stageFit = stageFitInputs(fitStageToSceneRef.current, runtime.kitScene, modelTransformRef.current.offset?.toArray?.());
+    if (stageFitCurrent(runtime.stageFit, stageFit)) return;
+    stageFit.fit(runtime, runtime.kitScene);
+    runtime.stageFit = stageFit;
     runtime.invalidateShadows?.();
   }, []);
   const viewportContext = useMemo(() => ({ runtimeRef, hostRef: interactionHostRef, mountRef, viewerReadyTick, commitScene, syncSceneBounds }),

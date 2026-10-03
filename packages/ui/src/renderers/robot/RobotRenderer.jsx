@@ -84,8 +84,9 @@ function RobotSurface({ view, data }) {
 
   // ---- selection -------------------------------------------------------------------------
   const shellRef = useRef(null);
-  const requestRender = useCallback(() => shellRef.current?.requestRender(), []);
-  const selection = useLinkSelection({ scene, requestRender });
+  // A highlight recolours links and casts no new shadow: its frame keeps the shadow maps.
+  const requestHighlightFrame = useCallback(() => shellRef.current?.requestFrame?.(), []);
+  const selection = useLinkSelection({ scene, requestRender: requestHighlightFrame });
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
   const live = useMemo(() => ({

@@ -168,8 +168,15 @@ for scheduling, resource caching, loading presentation and capture readiness.
 Floor defaults to model origin (Z=0), 60% opacity, with Lowest point available.
 While Render's lighting is on it carries a studio's soft grounding shadow, as deep
 as the floor is opaque: darkest where the model touches it, the key light's cast
-shadow softening and fading away from the model. It is re-baked only when the
-scene's shadows re-render, never while the camera alone moves.
+shadow softening and fading away from the model. The viewer re-renders its
+shadows, and re-bakes this one, only for a change that can alter them: never
+while the camera alone moves, and never for a hover, a selection or any other
+highlight, which leave every part casting as it did (a highlighted part keeps
+its shadow). While a routine plays or a pose is dragged, the key's cast shadow on the
+floor follows every frame and the contact darkening under the model at most every
+100 ms; once the model stops, both are baked for its final pose. A floor at zero
+opacity bakes nothing, and a viewer that renders in software, whose key casts no
+shadow, draws no floor shadow.
 Its double-sided surface uses its actual elevation during
 camera depth fitting, avoiding the origin-placement near-plane gap. Its color
 and opacity are independent of Background.
