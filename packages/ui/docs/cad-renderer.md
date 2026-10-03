@@ -1300,7 +1300,12 @@ the time React holds (where playback started, written back only when it stops),
 so a pass React re-runs mid-play — a detail swap, a progressive publish, a display
 change — draws the frame the next tick would (`playbackFrameTime`). The
 scrubber is the clock's only React subscriber. Because the pass runs inside
-the tick, the clock's adaptive pacing measures a frame's real cost. A frame that
+the tick, the clock's adaptive pacing measures a frame's real cost, and only a
+run of frames that all overran slows it (`createAnimationFramePacer` in core's
+`common/animationClock.js`): a frame that misses one vsync publishes on, where
+pacing on it held the routine still for two or three frames and then moved it
+four or five. The clip resolves each `m.get` target once per occurrence table,
+not every frame (`animationRuntime.js`). A frame that
 only moved parts skips material and instance-membership reconciliation: the
 effects pass reports whether a style, visibility or highlight changed
 (`applyStepModuleEffectsToRecords`), and moved instances sync their own matrix.

@@ -142,6 +142,27 @@ test("while the scene keeps changing the key's shadow composites every frame, th
   assert.equal(time.frames, 2);
 });
 
+test("heights a moving scene's own frame renders cancel the frame asked for them", () => {
+  const time = manualTime();
+  const { scene, keyLight, contact, camera } = studio({ heightInterval: 100, ...time.options });
+  const renderer = rendererStub();
+  const keyPass = () => contact.sentinel.onBeforeShadow(renderer, contact.sentinel, camera, keyLight.shadow.camera);
+  const frame = () => contact.layer.onBeforeRender(renderer, scene, camera);
+  frame();
+  time.advance(16);
+  keyPass();
+  frame();
+  assert.equal(time.pending(), 1, "a frame is asked for, for when the heights are due");
+  // The routine's own frame lands first, inside the last millisecond, and renders them.
+  time.advance(83.5);
+  keyPass();
+  frame();
+  assert.equal(renderer.calls.heights, 2);
+  assert.equal(time.pending(), 0, "that frame is no longer owed");
+  time.advance(200);
+  assert.equal(time.frames, 0, "and is never asked for");
+});
+
 test("a floor at zero opacity is not drawn, so it bakes nothing; shown again it bakes at once", () => {
   const time = manualTime();
   const { scene, keyLight, contact, camera } = studio({ heightInterval: 100, ...time.options });

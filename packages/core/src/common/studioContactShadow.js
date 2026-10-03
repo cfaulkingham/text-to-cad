@@ -200,9 +200,11 @@ export function createHeightSchedule({
       }
       return false;
     },
-    /** Heights were rendered now: the interval starts again. */
+    /** Heights were rendered now: the interval starts again, and a frame asked for them is no longer owed. */
     rendered() {
       last = now();
+      if (timer !== null) clearTimer(timer);
+      timer = null;
     },
     /** The next heights are due at once. */
     reset() {
