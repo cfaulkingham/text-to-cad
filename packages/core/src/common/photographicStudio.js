@@ -13,7 +13,7 @@ import {
   PHOTOGRAPHIC_STUDIO_KEY_ILLUMINANCE,
   PHOTOGRAPHIC_STUDIO_STAGE_RADIUS_MULTIPLIER
 } from "./photographicStudioRig.js";
-import { createStudioContactShadow } from "./studioContactShadow.js";
+import { createStudioContactShadow, syncDitherScale } from "./studioContactShadow.js";
 import { createStudioFloorReflection } from "./studioFloorReflection.js";
 
 function component(value, axis, fallback) {
@@ -111,10 +111,16 @@ function updatePhysicalGroundColor(material, color) {
 // wavy contour bands; on a light floor a level is under a percent and nothing shows.
 // Triangular noise of up to one level, divided by the fragment's alpha so the floor's
 // blend leaves it at full size, turns the bands into grain too fine to see and leaves
-// every average colour as it was.
+// every average colour as it was. A snapshot that averages STUDIO_DITHER_SCALE squared
+// samples into each pixel it keeps draws the noise that much wider (`syncDitherScale`).
 const FLOOR_DITHER_FRAGMENT = /* glsl */ `
+#ifdef STUDIO_DITHER_SCALE
+gl_FragColor.rgb += (rand(gl_FragCoord.xy) + rand(gl_FragCoord.yx + 17.0) - 1.0) * STUDIO_DITHER_SCALE
+  / (255.0 * max(gl_FragColor.a, 0.05));
+#else
 gl_FragColor.rgb += (rand(gl_FragCoord.xy) + rand(gl_FragCoord.yx + 17.0) - 1.0)
   / (255.0 * max(gl_FragColor.a, 0.05));
+#endif
 `;
 
 function patchFloor(material, reflection) {
@@ -240,7 +246,8 @@ function updateFloorFinish(THREE, state, configuration, { contactShadow, softwar
 function updateGround(THREE, state, configuration, bounds, sceneScale, extentBounds = bounds, {
   contactShadow = {},
   softwareRendering = false,
-  guides = () => []
+  guides = () => [],
+  ditherScale = 1
 } = {}) {
   if (!configuration.backdrop.ground) {
     disposeGround(state);
@@ -294,6 +301,8 @@ function updateGround(THREE, state, configuration, bounds, sceneScale, extentBou
   if (state.groundKind === "physical") {
     updatePhysicalGroundColor(state.ground.material, configuration.backdrop.groundColor);
     updateFloorFinish(THREE, state, configuration, { contactShadow, softwareRendering, guides });
+    syncDitherScale(state.ground.material, ditherScale);
+    state.contactShadow?.setDitherScale(ditherScale);
   }
   state.ground.material.opacity = configuration.backdrop.groundOpacity;
   const minimumSize = sceneScale === "urdf" ? 0.5 : 100;
@@ -421,13 +430,18 @@ function updateRendererAndScene(THREE, runtime, state, configuration) {
  * re-measures its heights at most that often; without them (a snapshot) every frame that
  * re-renders shadows bakes them. A runtime that renders in software (`softwareRendering`)
  * gets no floor shadow: its key casts none either.
+ *
+ * `ditherScale` is how many drawn pixels a kept pixel spans across: a snapshot passes its
+ * render scale, so the floor's dither survives its downsampling (`syncDitherScale`); a viewer,
+ * which shows its pixels as drawn, keeps 1.
  */
 export function applyPhotographicStudio(THREE, runtime, configuration = {}, {
   bounds = runtime?.modelBounds,
   groundBounds = null,
   sceneScale = "cad",
   shadowMapSize = 2048,
-  contactShadow = {}
+  contactShadow = {},
+  ditherScale = 1
 } = {}) {
   if (!THREE || !runtime?.scene || !runtime?.renderer) {
     throw new Error("applyPhotographicStudio requires THREE and a runtime with scene and renderer");
@@ -452,7 +466,7 @@ export function applyPhotographicStudio(THREE, runtime, configuration = {}, {
   updateGround(THREE, state, resolved, resolvedBounds, sceneScale,
     groundBounds ? resolveBounds(groundBounds, runtime.modelRadius) : resolvedBounds,
     { contactShadow, softwareRendering: runtime.softwareRendering === true,
-      guides: () => [runtime.gridHelper, runtime.originAxis] });
+      guides: () => [runtime.gridHelper, runtime.originAxis], ditherScale });
 
   runtime.invalidateShadows?.();
   runtime.requestRender?.();

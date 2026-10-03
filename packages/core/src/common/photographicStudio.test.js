@@ -405,6 +405,34 @@ test("the floor and its shadow are dithered: a dark floor's shallow gradients ro
   disposePhotographicStudio(value);
 });
 
+test("a snapshot's render scale spreads the floor's dither, and a viewer's floor compiles as it always did", () => {
+  // A snapshot at render scale 2 averages four drawn pixels into each pixel it keeps, which
+  // quiets one level of noise to half of one and lets the kept pixels band again.
+  const snapshot = runtime();
+  const state = applyPhotographicStudio(THREE, snapshot, configuration({ color: "#121315" }), { ditherScale: 2 });
+  assert.equal(state.ground.material.defines?.STUDIO_DITHER_SCALE, "2.0000", "the floor's noise is drawn twice as wide");
+  assert.equal(state.contactShadow.layer.material.defines?.STUDIO_DITHER_SCALE, "2.0000", "and its shadow's");
+  const shader = {
+    uniforms: {},
+    vertexShader: "#include <common>\nvoid main() {\n#include <fog_vertex>\n}",
+    fragmentShader: "#include <common>\nvoid main() {\n#include <dithering_fragment>\n}"
+  };
+  state.ground.material.onBeforeCompile(shader);
+  assert.match(shader.fragmentShader, /\* STUDIO_DITHER_SCALE/);
+  assert.match(state.contactShadow.layer.material.fragmentShader, /\* STUDIO_DITHER_SCALE/);
+  // A viewer shows its pixels as drawn and passes no scale: nothing is defined, so its
+  // programs, and its pixels, are the ones they always were; a scale back at 1 is that again.
+  const viewer = runtime();
+  const viewerState = applyPhotographicStudio(THREE, viewer, configuration({ color: "#121315" }));
+  assert.equal(viewerState.ground.material.defines?.STUDIO_DITHER_SCALE, undefined);
+  assert.equal(viewerState.contactShadow.layer.material.defines?.STUDIO_DITHER_SCALE, undefined);
+  applyPhotographicStudio(THREE, snapshot, configuration({ color: "#121315" }), { ditherScale: 1 });
+  assert.equal(state.ground.material.defines?.STUDIO_DITHER_SCALE, undefined);
+  assert.equal(state.contactShadow.layer.material.defines?.STUDIO_DITHER_SCALE, undefined);
+  disposePhotographicStudio(snapshot);
+  disposePhotographicStudio(viewer);
+});
+
 test("a matte floor allocates nothing of a glossy one's reflection, which goes again once the floor is matte or unlit", () => {
   const value = runtime();
   const floorShader = (material) => {

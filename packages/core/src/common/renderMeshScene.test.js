@@ -699,6 +699,35 @@ test("an exploded Render snapshot keeps its floor and floor shadow on the rest p
   }
 });
 
+test("a snapshot drawn at a render scale above 1 spreads its floor's dither by it", async () => {
+  // Final draws twice the pixels it keeps: each kept pixel averages four, and the dither
+  // must be drawn twice as wide to survive that, or the dark floor's bands come back.
+  const job = { mode: "view", kind: "step", display: { mode: "render", lighting: { quality: "final" } },
+    outputs: [{ path: "final.png", width: 64, height: 64, camera: "iso" }] };
+  const meshData = wideTwoPartMeshData();
+  const context = renderJobContext(meshData, job);
+  const model = buildModel(THREE, { kind: "step", meshData }, modelOptionsForRenderJob(context, job));
+  const scene = new THREE.Scene();
+  scene.add(model.root);
+  const configuration = context.sceneSettings.render.configuration;
+  const renderer = { ...studioRendererStub(), getPixelRatio() { return context.sharedRenderOptions.renderScale; } };
+  const studioRuntime = { scene, renderer, modelBounds: model.bounds };
+  applyPhotographicStudio(THREE, studioRuntime, configuration, {
+    sceneScale: context.sceneScale, shadowMapSize: context.quality.shadowMapSize, bounds: model.bounds, groundBounds: model.restBounds
+  });
+  const viewport = { ...stubViewport(model, scene), renderer, context, studioRuntime, studioConfiguration: configuration };
+  try {
+    assert.equal(context.sharedRenderOptions.renderScale, 2, "Final draws at twice the size it keeps");
+    await captureModel(viewport, { job });
+    const studio = studioRuntime.photographicStudio;
+    assert.equal(studio.ground.material.defines?.STUDIO_DITHER_SCALE, "2.0000");
+    assert.equal(studio.contactShadow.layer.material.defines?.STUDIO_DITHER_SCALE, "2.0000");
+  } finally {
+    disposePhotographicStudio(studioRuntime);
+    model.dispose();
+  }
+});
+
 test("an exploded snapshot radiates from the rest box the viewer explodes from, a declared box included", async () => {
   // A package's declared box (assembly.json's bbox) is tighter than its parts' boxes once a part
   // is turned; the viewer centres its layout on it (useStepExplode, `runtime.zeroPoseBounds`).

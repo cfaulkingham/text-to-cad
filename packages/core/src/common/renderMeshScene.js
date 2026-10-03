@@ -960,7 +960,9 @@ export function renderModel(_THREE, model, viewportOptions = {}) {
       // still must too, or the CLI and the viewer disagree about how big the ground is.
       groundBounds: viewportOptions.floorBounds ? null : restGroundBounds,
       sceneScale: context.sceneScale,
-      shadowMapSize: context.quality.shadowMapSize
+      shadowMapSize: context.quality.shadowMapSize,
+      // Each kept pixel averages renderScale² drawn ones: the floor's dither is drawn that much wider.
+      ditherScale: renderer.getPixelRatio()
     });
   } else if (normalizeBoolean(job.output?.transparent, false) || context.theme.background?.type === "transparent") {
     scene.background = null;
@@ -1332,7 +1334,8 @@ export async function captureModel(viewport, captureOptions = {}) {
         // rescales or slides them; a video's locked frame keeps its union box for both.
         groundBounds: captureOptions.frameBounds ? null : restBounds,
         sceneScale,
-        shadowMapSize: context.quality.shadowMapSize
+        shadowMapSize: context.quality.shadowMapSize,
+        ditherScale: viewport.renderer.getPixelRatio?.() ?? 1
       });
       fitDepth();
       if (outputTimings) outputTimings.prepareStudioMs = Math.round(performance.now() - stageStarted);

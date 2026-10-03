@@ -206,7 +206,12 @@ noise as it is drawn (the floor's divided by its alpha, so its blend keeps it
 whole; the layer's drawn premultiplied, so the blend adds exactly that noise over
 whatever floor is under it). A dark floor's shading spans only a few levels of
 the canvas, and rounding drew it as wavy contour bands; the noise is too fine to
-see and leaves every average colour where it was.
+see and leaves every average colour where it was. A snapshot drawn at a render
+scale above 1 averages that scale squared of drawn pixels into each one it keeps,
+which quietened the noise to a fraction of a level and let the rounding band
+again: it passes its render scale as `applyPhotographicStudio`'s `ditherScale`,
+which spreads both noises that much wider (`syncDitherScale`). The viewer keeps
+1, and at 1 nothing is defined: its shaders are the ones they always were.
 
 The floor's finish is `backdrop.groundFinish` (`PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES`):
 `matte`, the default, or `glossy`, a glossier surface that also reflects the model

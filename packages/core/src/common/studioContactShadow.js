@@ -119,10 +119,15 @@ uniform float uReady;
 uniform vec4 uStrength;
 varying vec2 vUv;
 
-// Up to one 8-bit level of noise per pixel (three's rand hash).
+// Up to one 8-bit level of noise per pixel (three's rand hash). Spread STUDIO_DITHER_SCALE
+// times wider about the same mean where each kept pixel averages that scale squared of these.
 float ditherNoise(vec2 uv) {
   highp float dt = mod(dot(uv, vec2(12.9898, 78.233)), 3.141592653589793);
+#ifdef STUDIO_DITHER_SCALE
+  return max((fract(sin(dt) * 43758.5453) - 0.5) * STUDIO_DITHER_SCALE + 0.5, 0.0) / 255.0;
+#else
   return fract(sin(dt) * 43758.5453) / 255.0;
+#endif
 }
 
 void main() {
@@ -180,6 +185,23 @@ function eachMaterial(object, visit) {
 
 const defaultNow = () => (typeof performance !== "undefined" && typeof performance.now === "function"
   ? performance.now() : Date.now());
+
+/**
+ * How far the floor's dither (and its shadow layer's) is spread: `scale`, a snapshot's render
+ * scale. A snapshot draws `scale` times the pixels it keeps and averages each kept pixel over
+ * scale² of them, which quiets one level of noise to 1/scale and lets the rounding of what it
+ * keeps band again; drawn that much wider, the noise comes back at a level. At 1 (the viewer,
+ * which shows its pixels as drawn) nothing is defined, and the shader is the one it always was.
+ */
+export function syncDitherScale(material, scale) {
+  const value = Number(scale) > 1 && Number.isFinite(Number(scale)) ? Number(scale).toFixed(4) : null;
+  if ((material.defines?.STUDIO_DITHER_SCALE ?? null) === value) return;
+  const defines = { ...material.defines };
+  delete defines.STUDIO_DITHER_SCALE;
+  if (value) defines.STUDIO_DITHER_SCALE = value;
+  material.defines = defines;
+  material.needsUpdate = true;
+}
 
 /**
  * When stale heights are rendered: at once, or, with an `interval` in milliseconds, no
@@ -468,6 +490,10 @@ export function createStudioContactShadow(THREE, keyLight, {
     setEnabled(enabled) {
       state.enabled = enabled;
       showLayer();
+    },
+    /** The dither's spread: a snapshot's render scale (`syncDitherScale`). */
+    setDitherScale(scale) {
+      syncDitherScale(layer.material, scale);
     },
     get stale() {
       return state.heightsStale || state.compositeStale;
