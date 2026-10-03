@@ -387,7 +387,8 @@ src/cadgen/
                          #   cli_from_function, doors (documents by bytes),
                          #   source_sidecar, step_assemble/step_reemit
   viewer/                # the CAD Viewer's server: launcher (main),
-                         #   routes (http_app), catalog (scanner), the model
+                         #   routes (http_app), catalog (scanner; its rows
+                         #   started when a watched build saves: warm), the model
                          #   library every CAD view shares (recents), status
                          #   (artifact_status: not compiled / compiling /
                          #   compiled / failed), build_progress (the daemon's

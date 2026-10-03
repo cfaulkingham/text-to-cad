@@ -120,6 +120,16 @@ rules cover the stamps that fail to move:
 The memo holds at most 65,536 directories, least recently walked dropped first,
 and forgets a directory — with everything under it — once it is gone. A file's
 content is not a listing fact: catalog rows fingerprint their own files.
+
+A row is computed once per version of its file, whoever asks first: a read that
+arrives while the same version's digest or row is being computed waits for that
+computation rather than repeating it, and a read of a file that has changed since
+asks about the new version. A build the client is watching (its build feed,
+`GET /__cad/preview`) that saves a file starts that file's row on a thread of the
+server's as soon as the daemon's ledger lists the save (`cadgen.viewer.warm`),
+so the catalog read that follows the build finds it computed or joins it. The
+row is still the file's: its digest is read from the file's bytes, and the tree
+the ledger says the build saved only starts that tree's capture alongside.
 Reading a file to hash it never holds up its deletion: the catalog opens models
 with delete sharing on Windows, and a model that vanishes mid-read gets an empty
 hash on that request and is gone on the next. A filesystem whose directory

@@ -127,11 +127,8 @@ class ViewerTunnel:
     def preview(self, root: Root, file: str) -> dict[str, Any]:
         """One file's build feed, now (the route's ``after`` would hold the request; the view
         asks again on its next sync)."""
-        from cadgen.viewer.preview import preview_update
-
-        app = self.app_for(root)
         try:
-            return preview_update(app.backend.root_path, file, after=None, lazy=app.backend.lazy)
+            return self.app_for(root).build_status(file)
         except Exception as error:  # noqa: BLE001 - the feed's failure is the view's to show, as the route's 4xx was
             return {"error": str(error) or type(error).__name__}
 

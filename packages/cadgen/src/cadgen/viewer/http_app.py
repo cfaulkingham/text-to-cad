@@ -249,11 +249,14 @@ class CadApp:
 
     def __init__(self, *, root: str, host: str, port: int, dist_dir: str = "", lazy: bool = False):
         from .surfaces import SurfaceSubscribers
+        from .warm import CatalogWarmer
 
         self.surface_subscribers = SurfaceSubscribers()
         self.backend = LocalAssetBackend(root, lazy=lazy)
         root_path = self.backend.root_path
         self.root_path = root_path
+        # What a build saves, its catalog rows computed before a read asks (``warm.py``).
+        self.catalog_warm = CatalogWarmer(root_path, lazy=lazy)
         self.root_name = self.backend.root_name
         # A connection port is ephemeral; persisted view state follows the
         # canonical directory this server exposes.  Hash the realpath so
@@ -337,6 +340,15 @@ class CadApp:
         reading the catalog again."""
         catalog = self.backend.read_catalog(preferred_file)
         return {**catalog, "rootId": self.root_id, "revision": catalog_revision(catalog.get("entries", []))}
+
+    def build_status(self, file_ref, *, after=None) -> dict:
+        """What a build of ``file_ref`` is doing (``GET /__cad/preview``, ``preview.py``). The files
+        its builds have saved have their catalog rows started on a thread meanwhile (``warm.py``),
+        so the catalog read that follows the build finds them."""
+        from .preview import preview_update
+
+        return preview_update(self.backend.root_path, file_ref, after=after, lazy=self.backend.lazy,
+                              on_saved=self.catalog_warm.saved)
 
     # --- gates ------------------------------------------------------------
 
@@ -468,11 +480,7 @@ class CadApp:
                 elif pathname == "/__cad/artifact":
                     self._handle_artifact_status(request, response, query)
                 elif pathname == "/__cad/preview":
-                    from .preview import preview_update
-
-                    response.send_json(200, preview_update(
-                        self.backend.root_path, query.get("file") or "", after=query.get("after"), lazy=self.backend.lazy
-                    ))
+                    response.send_json(200, self.build_status(query.get("file") or "", after=query.get("after")))
                 elif pathname == "/__cad/drawing":
                     self._handle_drawing(request, response, query)
                 elif pathname == "/__cad/store":
