@@ -22,14 +22,23 @@ tree the ledger says the build saved is used for one thing, starting that tree's
 capture while the bytes are read, so the two overlap; whether the row shows that
 tree is the bytes' answer.
 
+The file the feed is about goes first: a parent saves last, after its children.
+A lazy root (the CAD app's whole filesystem) lists only the files a view names,
+so it warms only that one; each view's own feed warms its own file.
+
 Bounded: one warming thread per served root, alive only while it has files to
 warm, and one capture beside it; at most :data:`WARM_PENDING_LIMIT` files waiting
 (a save beyond that is left to the read that needs it); each file version warmed
 once, however often the feed lists its save.
+
+Best effort: warming only saves a read time, so nothing it fails at reaches the
+feed. A row it cannot compute, or a thread it cannot start, is left to the read
+that asks, which computes and reports it as before; the failure is logged.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from collections import OrderedDict
@@ -48,6 +57,8 @@ from .scanner import (
 )
 
 __all__ = ["CatalogWarmer", "WARM_PENDING_LIMIT", "WARM_REMEMBERED_LIMIT"]
+
+LOG = logging.getLogger("cadgen.viewer.warm")
 
 # Saved files waiting to be warmed at once.
 WARM_PENDING_LIMIT = 16
@@ -70,27 +81,40 @@ class CatalogWarmer:
         self._warmed: OrderedDict[str, tuple] = OrderedDict()
         self._working = False
 
-    def saved(self, outputs: dict) -> None:
+    def saved(self, outputs: dict, watched: str | None = None) -> None:
         """Warm the rows of ``outputs`` (each saved path, as the ledger names it, and the tree
-        its build saved). Returns at once: the work is a thread's."""
-        start = False
+        its build saved), ``watched`` (the file the feed is about) first; a lazy root warms
+        only ``watched``. Returns at once: the work is a thread's."""
+        first = self._listed(watched) if watched else None
         for output, tree in outputs.items():
             path = self._listed(output)
-            if path is None:
+            if path is None or (self._lazy and path != first):
                 continue
             fingerprint = catalog_input_fingerprint(path)
             if fingerprint[1] is None:
                 continue  # gone again
             with self._lock:
-                if self._warmed.get(path) == fingerprint or path in self._pending:
+                if self._warmed.get(path) == fingerprint:
                     continue
-                if len(self._pending) >= WARM_PENDING_LIMIT:
+                if path not in self._pending and len(self._pending) >= WARM_PENDING_LIMIT:
                     continue
+                # A newer save of a file still waiting takes its place.
                 self._pending[path] = (fingerprint, str(tree or ""))
-                if not self._working:
-                    self._working = start = True
+                if path == first:
+                    self._pending.move_to_end(path, last=False)
+        with self._lock:
+            # Saves left waiting by a thread that failed are taken up here too.
+            start = bool(self._pending) and not self._working
+            if start:
+                self._working = True
         if start:
-            threading.Thread(target=self._drain, name="cadgen-viewer-catalog-warm", daemon=True).start()
+            try:
+                threading.Thread(target=self._drain, name="cadgen-viewer-catalog-warm", daemon=True).start()
+            except RuntimeError as error:  # no thread to be had: the reads compute their rows themselves
+                LOG.warning("catalog warm could not start: %r", error)
+                with self._lock:
+                    self._working = False
+                    self._settled.notify_all()
 
     def wait_settled(self, timeout: float | None = None) -> bool:
         """Whether every noted save has been warmed (within ``timeout`` seconds)."""
@@ -116,27 +140,39 @@ class CatalogWarmer:
         return path if listed else None
 
     def _drain(self) -> None:
-        while True:
-            with self._lock:
-                if not self._pending:
+        settled = False
+        try:
+            while True:
+                with self._lock:
+                    if not self._pending:
+                        self._working = False
+                        self._settled.notify_all()
+                        settled = True
+                        return
+                    path, (fingerprint, tree) = self._pending.popitem(last=False)
+                    # Warmed from now on: the feed lists the save again while it is being warmed.
+                    self._warmed[path] = fingerprint
+                    self._warmed.move_to_end(path)
+                    while len(self._warmed) > WARM_REMEMBERED_LIMIT:
+                        self._warmed.popitem(last=False)
+                self._warm(path, tree)
+        finally:
+            if not settled:  # this thread failed: the next save starts another
+                with self._lock:
                     self._working = False
                     self._settled.notify_all()
-                    return
-                path, (fingerprint, tree) = self._pending.popitem(last=False)
-                # Warmed from now on: the feed lists the save again while it is being warmed.
-                self._warmed[path] = fingerprint
-                self._warmed.move_to_end(path)
-                while len(self._warmed) > WARM_REMEMBERED_LIMIT:
-                    self._warmed.popitem(last=False)
-            capture = None
+
+    def _warm(self, path: str, tree: str) -> None:
+        capture = None
+        try:
             if tree:
                 capture = threading.Thread(target=_capture, args=(tree,), name="cadgen-viewer-tree-warm", daemon=True)
                 capture.start()
-            try:
-                warm_catalog_entry(self.root_path, path)
-            except Exception:  # noqa: BLE001 - a row that cannot be computed now is the read's to report
-                pass
-            if capture is not None:
+            warm_catalog_entry(self.root_path, path)
+        except Exception as error:  # noqa: BLE001 - a row that cannot be computed now is the read's to report
+            LOG.warning("catalog warm of %s failed: %r", path, error)
+        finally:
+            if capture is not None and capture.ident is not None:
                 capture.join()
 
 
@@ -150,5 +186,5 @@ def _capture(tree: str) -> None:
         return
     try:
         capture_tree(tree, retain_payloads=False)
-    except Exception:  # noqa: BLE001 - a damaged or collected tree is the read's to report
-        pass
+    except Exception as error:  # noqa: BLE001 - a damaged or collected tree is the read's to report
+        LOG.debug("tree warm of %s failed: %r", tree[:16], error)

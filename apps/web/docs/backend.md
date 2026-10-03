@@ -124,12 +124,18 @@ content is not a listing fact: catalog rows fingerprint their own files.
 A row is computed once per version of its file, whoever asks first: a read that
 arrives while the same version's digest or row is being computed waits for that
 computation rather than repeating it, and a read of a file that has changed since
-asks about the new version. A build the client is watching (its build feed,
+asks about the new version. A version is the file's mtime and size and, for a save
+by rename inside one tick of a coarse clock (HFS+, FAT, some shares), its inode and
+ctime. A build the client is watching (its build feed,
 `GET /__cad/preview`) that saves a file starts that file's row on a thread of the
 server's as soon as the daemon's ledger lists the save (`cadgen.viewer.warm`),
 so the catalog read that follows the build finds it computed or joins it. The
-row is still the file's: its digest is read from the file's bytes, and the tree
-the ledger says the build saved only starts that tree's capture alongside.
+watched file goes first, since a parent saves after its children, and a lazy
+root (the CAD app's whole filesystem, which lists only what a view names) warms
+nothing else. The row is still the file's: its digest is read from the file's
+bytes, and the tree the ledger says the build saved only starts that tree's
+capture alongside. Warming is best effort: a row it cannot compute, or a thread
+it cannot start, is left to the read, and the feed answers regardless.
 Reading a file to hash it never holds up its deletion: the catalog opens models
 with delete sharing on Windows, and a model that vanishes mid-read gets an empty
 hash on that request and is gone on the next. A filesystem whose directory

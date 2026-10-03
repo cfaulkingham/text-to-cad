@@ -257,41 +257,44 @@ def artifact_path_key(entry_path: Path) -> str:
     return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:24]
 
 
-# Content-hash cache for artifact files, keyed by (path, mtime_ns, size): a
-# catalog scan or status poll re-asks for the same file's hash constantly,
-# and rereading megabytes each time would turn polling into IO. A stale hit
-# requires an edit that preserves BOTH mtime_ns and size — not a real editor.
+# Content-hash cache for artifact files, keyed by the path and the file's
+# version (`_file_version`): a catalog scan or status poll re-asks for the same
+# file's hash constantly, and rereading megabytes each time would turn polling
+# into IO. A version is the mtime and size, which a real editor's save moves,
+# and the inode and ctime, which a save by rename (every build's) moves even
+# where the mtime is coarse: HFS+, FAT, exFAT and some network shares keep it to
+# a second or two, so a same-size save inside one tick keeps mtime and size.
 #
 # Bounded and locked: the viewer server shares this cache across request
 # threads for the life of the process, and a large corpus would otherwise
 # grow it without limit.
-_ARTIFACT_HASH_MEMO: dict[str, tuple[int, int, str]] = {}
+_ARTIFACT_HASH_MEMO: dict[str, tuple[tuple[int, ...], str]] = {}
 _ARTIFACT_HASH_MEMO_LIMIT = 4096
 _ARTIFACT_HASH_MEMO_LOCK = threading.Lock()
 # One read per file version. A just-saved document is asked for by several readers at once --
 # the CAD Viewer's catalog, its status routes, and the catalog row it warms as the save is
 # announced -- and each would otherwise read every byte of it beside the others. A reader that
-# finds the same (path, mtime_ns, size) already being read waits for that read's answer.
-_ARTIFACT_HASH_FLIGHTS: dict[tuple[str, int, int], threading.Event] = {}
+# finds the same file version already being read waits for that read's answer.
+_ARTIFACT_HASH_FLIGHTS: dict[tuple, threading.Event] = {}
 _ARTIFACT_HASH_CHUNK_BYTES = 16 << 20
 
 
-def _remember_artifact_hash(key: str, mtime_ns: int, size: int, digest: str) -> None:
+def _remember_artifact_hash(key: str, version: tuple[int, ...], digest: str) -> None:
     with _ARTIFACT_HASH_MEMO_LOCK:
         if len(_ARTIFACT_HASH_MEMO) >= _ARTIFACT_HASH_MEMO_LIMIT:
             _ARTIFACT_HASH_MEMO.clear()
-        _ARTIFACT_HASH_MEMO[key] = (mtime_ns, size, digest)
+        _ARTIFACT_HASH_MEMO[key] = (version, digest)
 
 
-def _file_version(stat: os.stat_result) -> tuple[int, int]:
+def _file_version(stat: os.stat_result) -> tuple[int, ...]:
     """What the memo keys a file's version by (beside its path)."""
-    return stat.st_mtime_ns, stat.st_size
+    return stat.st_mtime_ns, stat.st_size, stat.st_ino, stat.st_ctime_ns
 
 
 def _remembered_artifact_hash(key: str, stat: os.stat_result) -> str | None:
     """The digest remembered for this version of the file; the caller holds the memo's lock."""
     cached = _ARTIFACT_HASH_MEMO.get(key)
-    return cached[2] if cached is not None and cached[:2] == _file_version(stat) else None
+    return cached[1] if cached is not None and cached[0] == _file_version(stat) else None
 
 
 def _read_artifact_hash(resolved: Path, key: str) -> str | None:
@@ -316,7 +319,7 @@ def _read_artifact_hash(resolved: Path, key: str) -> str | None:
         return None
     hexdigest = digest.hexdigest()
     if _file_version(after) == _file_version(read):
-        _remember_artifact_hash(key, read.st_mtime_ns, read.st_size, hexdigest)
+        _remember_artifact_hash(key, _file_version(read), hexdigest)
     return hexdigest
 
 
@@ -366,7 +369,7 @@ def seed_artifact_hash(entry_path: Path, digest: str) -> None:
         stat = resolved.stat()
     except OSError:
         return
-    _remember_artifact_hash(str(resolved), stat.st_mtime_ns, stat.st_size, digest)
+    _remember_artifact_hash(str(resolved), _file_version(stat), digest)
 
 
 def result_snapshot_for(entry_path: Path) -> tuple[str, str] | None:

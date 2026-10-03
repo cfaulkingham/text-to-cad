@@ -1603,6 +1603,15 @@ than at its next poll. It never announces a background file write it did not
 perform. A saved-tree identity change clears incompatible selection and
 measurement state.
 
+The server reads one more thing off the channel, to save that catalog read its
+time: when a build of the watched file has saved its outputs, it starts their
+catalog rows on a thread of its own, the watched file first
+(`cadgen.viewer.warm`). Law 1 holds for those rows as for every other: a row is
+computed from its file's bytes, and its digest from those bytes. The tree the
+ledger says the build saved is used only to start that tree's capture while the
+bytes are read; a row shows it only if the bytes name it. Warming is best effort:
+what it fails at is left to the read, and the channel answers regardless.
+
 An open editing tab holds one request against an opaque ledger cursor scoped
 to its output and store. A matching change wakes it immediately; unrelated jobs
 do not cause browser updates. The cursor and job snapshot are captured under

@@ -151,8 +151,7 @@ class CatalogWarmTests(unittest.TestCase):
             release.wait(HANG)
             return real_open(path)
 
-        stat = self.part.stat()
-        flight = (str(self.part), stat.st_mtime_ns, stat.st_size)
+        flight = (str(self.part), *catalog._file_version(self.part.stat()))
         with mock.patch.object(catalog, "open_shared_for_read", held_open):
             readers = [threading.Thread(target=lambda: answers.append(catalog.artifact_file_hash(self.part))) for _ in range(2)]
             readers[0].start()
@@ -168,7 +167,7 @@ class CatalogWarmTests(unittest.TestCase):
 
     def test_a_file_replaced_during_its_warm_is_read_afresh_and_never_served_stale(self):
         first = seed_result(self.part, {"label": "first"})
-        held, release = threading.Event(), threading.Event()
+        held, release, resumed = threading.Event(), threading.Event(), threading.Event()
         real_open = catalog.open_shared_for_read
         opens = []
 
@@ -178,6 +177,7 @@ class CatalogWarmTests(unittest.TestCase):
             if len(opens) == 1:  # the warm's read, of the first version
                 held.set()
                 release.wait(HANG)
+                resumed.set()
             return handle
 
         with mock.patch.object(catalog, "open_shared_for_read", holding_open):
@@ -185,8 +185,9 @@ class CatalogWarmTests(unittest.TestCase):
             self.assertTrue(held.wait(HANG))
             self.replace(b"second version\n")
             second = seed_result(self.part, {"label": "second"})
-            # The read neither waits for the warm nor takes its version.
+            # The read neither waits for the warm (still held when it answers) nor takes its version.
             self.assertEqual((self.entry()["documentHash"], self.entry()["hash"]), (_sha(self.part), second))
+            self.assertFalse(resumed.is_set())
             release.set()
             self.assertTrue(self.app.catalog_warm.wait_settled(HANG))
         # Nor does what the warm read of the first version answer for the second.
@@ -213,6 +214,54 @@ class CatalogWarmTests(unittest.TestCase):
             self.assertTrue(self.app.catalog_warm.wait_settled(HANG))
         # The one being warmed, then as many as wait at once; the rest are left to the reads.
         self.assertEqual(warmed, names[: 1 + warm.WARM_PENDING_LIMIT])
+
+    def test_the_watched_file_is_warmed_first_and_a_lazy_root_warms_only_it(self):
+        others = [self.root / "a.step", self.root / "b.step"]
+        for other in others:
+            other.write_bytes(other.name.encode("ascii"))
+        saves = {str(path): "" for path in [*others, self.part]}  # a parent saves after its children
+        warmed = []
+        with mock.patch.object(warm, "warm_catalog_entry", lambda root, path: warmed.append(os.path.basename(path))):
+            self.app.catalog_warm.saved(saves, str(self.part))
+            self.assertTrue(self.app.catalog_warm.wait_settled(HANG))
+            self.assertEqual(warmed, ["part.step", "a.step", "b.step"])
+            warmed.clear()
+            lazy = warm.CatalogWarmer(str(self.root), lazy=True)  # the CAD app's whole filesystem
+            lazy.saved(saves, str(self.part))
+            self.assertTrue(lazy.wait_settled(HANG))
+        self.assertEqual(warmed, ["part.step"])
+
+    def test_a_warm_that_fails_never_reaches_the_feed_nor_stops_the_next(self):
+        tree = seed_result(self.part, {"label": "saved"})
+        with mock.patch.object(warm, "warm_catalog_entry", side_effect=OSError("disk gone")), self.ledger(tree), \
+                self.assertLogs("cadgen.viewer.warm", "WARNING"):
+            self.assertEqual(self.app.build_status("part.step", after="epoch:1")["phase"], "STEP saved")
+            self.assertTrue(self.app.catalog_warm.wait_settled(HANG))
+        with mock.patch.object(warm.CatalogWarmer, "saved", side_effect=RuntimeError("warm is broken")), \
+                self.ledger(tree), self.assertLogs("cadgen.viewer.preview", "WARNING"):
+            self.assertEqual(self.app.build_status("part.step", after="epoch:1")["phase"], "STEP saved")
+        self.replace(b"second version\n")
+        with mock.patch.object(warm.threading, "Thread", side_effect=RuntimeError("can't start new thread")), \
+                self.assertLogs("cadgen.viewer.warm", "WARNING"):
+            self.app.catalog_warm.saved({str(self.part): ""})
+        self.assertTrue(self.app.catalog_warm.wait_settled(HANG))
+        # None of it wedged the warmer: the save left waiting goes with the next one.
+        warmed = []
+        with mock.patch.object(warm, "warm_catalog_entry", lambda root, path: warmed.append(os.path.basename(path))):
+            self.replace(b"third version\n")
+            self.app.catalog_warm.saved({str(self.part): ""})
+            self.assertTrue(self.app.catalog_warm.wait_settled(HANG))
+        self.assertEqual(warmed, ["part.step"])
+
+    def test_a_same_size_save_inside_one_mtime_tick_is_a_new_version(self):
+        # A coarse-mtime filesystem (HFS+, FAT, some shares) can give a rename-save the old file's
+        # mtime: the digest of the old bytes must not answer for the new ones.
+        old = self.part.stat()
+        self.assertEqual(catalog.artifact_file_hash(self.part), _sha(self.part))
+        self.replace(b"other version\n")  # the same size as "first version\n"
+        os.utime(self.part, ns=(old.st_atime_ns, old.st_mtime_ns))
+        self.assertEqual((self.part.stat().st_size, self.part.stat().st_mtime_ns), (old.st_size, old.st_mtime_ns))
+        self.assertEqual(catalog.artifact_file_hash(self.part), _sha(self.part))
 
     def test_only_files_the_catalog_lists_are_warmed(self):
         hidden = self.root / ".hidden" / "part.step"
