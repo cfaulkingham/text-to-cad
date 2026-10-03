@@ -208,3 +208,39 @@ for (const [fixture, chordTolerance] of [
     assert.equal(defects.unshared, 0, "a closed solid's every mesh edge is used by exactly two triangles");
   });
 }
+
+// 5. A PLANAR FACE MESHES ONCE OVER, every triangle wound with the face.
+//
+// plenum_end is the hypercar's intake plenum: a blunt ruled loft whose two end
+// faces are each bounded by ONE spline, and that spline closes to 0.18 um, so
+// sampleSharedEdge's relative test calls it open although both its ends weld
+// into one corner. The seam then carried fraction 1 alone, conformity read the
+// mesh edge from the seam to the loop's first point as the whole loop, split it
+// with every point of the edge, and the weld folded each end face over itself:
+// the streaks and blocks that crawled across the plenum while the showcase played.
+// Only its planar faces are held here: the rings between its curved bands are not
+// pinned to their shared edge yet, so the solid as a whole is not watertight.
+test("plenum_end: a face bounded by one spline that barely closes meshes once over, wound with the face", () => {
+  const { index, floats } = loadFixture("plenum_end");
+  const { positions, normals, indices, faceRanges } = tessellateComponent(index, floats);
+  const planes = index.faces.filter((face) => face.surfaceType === "plane");
+  assert.equal(planes.length, 2, "the plenum's two end faces");
+  const at = (i) => [positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]];
+  for (const face of planes) {
+    const range = faceRanges.find((r) => r.ord === face.ord);
+    let against = 0;
+    let area = 0;
+    for (let i = range.indexStart; i < range.indexStart + range.indexCount; i += 3) {
+      const [a, b, c] = [at(indices[i]), at(indices[i + 1]), at(indices[i + 2])];
+      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      const k = 3 * indices[i];
+      const signed = 0.5 * (n[0] * normals[k] + n[1] * normals[k + 1] + n[2] * normals[k + 2]);
+      if (signed < 0) against += 1;
+      area += signed;
+    }
+    assert.equal(against, 0, `face ${face.ord}: no triangle wound against the face`);
+    assert.ok(Math.abs(area - face.area) <= face.area * 0.02, `face ${face.ord}: meshed ${area} mm2 of ${face.area}`);
+  }
+});

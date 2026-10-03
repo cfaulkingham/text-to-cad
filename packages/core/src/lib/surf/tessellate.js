@@ -41,7 +41,7 @@ import { cos, sin } from "./trig.js";
 // cadgen/store/meshes.py, which is the one that builds and validates the key —
 // bumping only the first leaves the store rejecting every entry the new
 // algorithm writes.
-export const TESSELLATION_VERSION = 6;
+export const TESSELLATION_VERSION = 7;
 
 export const DEFAULT_OPTIONS = {
   // Max 3D distance between the surface and a triangle edge midpoint,
@@ -1907,6 +1907,17 @@ export function tessellateComponent(index, floats, options = {}) {
       }
       shared.points[0] = canonicalCorner(shared.points[0]);
       shared.points[shared.points.length - 1] = canonicalCorner(shared.points[shared.points.length - 1]);
+      // Ends that weld into ONE corner make the edge closed, though its curve's
+      // ends miss each other by more than sampleSharedEdge's relative test
+      // allows: an intake plenum's end face, bounded by one spline that closes
+      // to 0.18 um, kept its seam at fraction 1 alone, so conformity read the
+      // segment from the seam to the first point as the whole loop and folded
+      // the face over itself. A curve that only spans the weld distance stays
+      // open.
+      if (shared.curve.kind !== "line" && shared.points[0] === shared.points[shared.points.length - 1]
+        && shared.points.some((point) => length3(sub(point, shared.points[0])) > weldTolerance * 2 ** 10)) {
+        shared.closed = true;
+      }
     }
   }
 
