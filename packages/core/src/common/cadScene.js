@@ -2315,10 +2315,14 @@ function syncRecordShadowPolicy(record, receiveShadows) {
   if (!mesh || !material) {
     return;
   }
-  const opaque = material.transparent !== true && Number(material.opacity) >= 0.999;
+  const fullOpacity = Number(material.opacity) >= 0.999;
+  const opaque = material.transparent !== true && fullOpacity;
   const lit = material.isMeshStandardMaterial === true || material.isMeshPhysicalMaterial === true;
   mesh.receiveShadow = receiveShadows === true && opaque && lit;
-  mesh.castShadow = receiveShadows === true ? opaque && lit : true;
+  // A hovered or selected part is drawn in the transparent pass at full opacity
+  // (`applyPartVisualState`): it occludes the key exactly as before, so it still casts.
+  const casts = fullOpacity && (opaque || record.highlightOpaque === true);
+  mesh.castShadow = receiveShadows === true ? casts && lit : true;
 }
 
 function meshDataFromSource(source) {

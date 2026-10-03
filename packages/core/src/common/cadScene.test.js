@@ -1046,6 +1046,45 @@ test("buildModel applies source part opacity from GLB material metadata", () => 
   scene.dispose();
 });
 
+test("a hover or a selection never changes which parts cast a Render shadow; hiding and isolating do", () => {
+  const meshData = sampleMeshData();
+  meshData.parts = meshData.parts.map((part, index) => index === 0
+    ? { ...part, color: "#ff0000", opacity: 0.2, hasSourceColors: true }
+    : part
+  );
+  const scene = buildModel(THREE, meshData, {
+    theme: cloneThemePresetSettings("workbench-light"),
+    renderPartsIndividually: true,
+    receiveShadows: true
+  });
+  const left = scene.displayRecords.find((record) => record.partId === "left");
+  const right = scene.displayRecords.find((record) => record.partId === "right");
+  const casting = () => [left.mesh.castShadow, right.mesh.castShadow];
+  const visual = (state) => {
+    applyViewerPartVisualState(THREE, scene.displayRecords, { showEdges: true, ...state });
+    scene.syncSurfaceInstances();
+  };
+  assert.deepEqual(casting(), [false, true]);
+
+  // The highlight draws the opaque part in the transparent pass, still fully opaque.
+  visual({ hoveredPartId: "right" });
+  assert.equal(right.material.transparent, true);
+  assert.equal(right.material.opacity, 1);
+  assert.deepEqual(casting(), [false, true], "the hovered part still casts");
+  assert.equal(right.mesh.receiveShadow, false, "a highlight still takes no received shadow");
+  visual({ selectedPartIds: ["left", "right"] });
+  assert.deepEqual(casting(), [false, true], "a selected glass part does not start casting");
+  visual({});
+  assert.deepEqual(casting(), [false, true]);
+  assert.equal(right.mesh.receiveShadow, true);
+
+  visual({ hiddenPartIds: ["right"] });
+  assert.equal(right.mesh.visible, false, "a hidden part leaves the shadow pass by visibility");
+  visual({ focusedPartId: ["left"], hoveredPartId: "right" });
+  assert.equal(right.mesh.castShadow, false, "an isolated-away ghost casts no shadow, hovered or not");
+  scene.dispose();
+});
+
 test("buildModel uses part records when only source opacity differs", () => {
   const meshData = sampleMeshData();
   meshData.sourceColor = "#ff0000";
