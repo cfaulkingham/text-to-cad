@@ -7,6 +7,7 @@ import { Button } from '@text-to-cad/ui/primitives/button';
 import { createTabStore, memoryTabRecord } from '@text-to-cad/ui/tab-store';
 import { version } from '../package.json';
 import type { Bridge, HostContext } from './host/bridge';
+import { fitCapture } from './host/capture';
 import { createLiveRegistry, describeView } from './host/live';
 import { watchSupersession, type Presentation } from './host/presentation';
 import { chatReach } from './host/prompt';
@@ -122,7 +123,7 @@ export default function App({ bridge, server, launch: initial, presentation = 't
     capture: async () => {
       const controller = live.current();
       if (!controller) throw new Error('No model is showing in this CAD view.');
-      return controller.capture();
+      return fitCapture(await controller.capture());
     },
     state: () => describeView(live.current(), shown.current.model, shown.current.resolvePath),
     connection: connected => setLost(!connected),
