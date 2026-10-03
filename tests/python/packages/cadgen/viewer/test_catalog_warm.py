@@ -263,6 +263,17 @@ class CatalogWarmTests(unittest.TestCase):
         self.assertEqual((self.part.stat().st_size, self.part.stat().st_mtime_ns), (old.st_size, old.st_mtime_ns))
         self.assertEqual(catalog.artifact_file_hash(self.part), _sha(self.part))
 
+    def test_an_unbuilt_file_is_read_once_for_its_row(self):
+        reads = []
+
+        def counting(real):
+            return lambda path: (reads.append(path), real(path))[1]
+
+        with mock.patch.object(catalog, "open_shared_for_read", counting(catalog.open_shared_for_read)), \
+                mock.patch.object(scanner, "open_shared_for_read", counting(scanner.open_shared_for_read)):
+            entry = self.entry()  # nothing built it: no tree names its digest
+        self.assertEqual((entry["documentHash"], len(reads)), (_sha(self.part), 1))
+
     def test_only_files_the_catalog_lists_are_warmed(self):
         hidden = self.root / ".hidden" / "part.step"
         hidden.parent.mkdir()

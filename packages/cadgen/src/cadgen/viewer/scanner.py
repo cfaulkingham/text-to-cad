@@ -53,6 +53,7 @@ from .encoding import encode_uri_component, encode_url_path, file_version
 from .natural_sort import sort_catalog_entries
 from .store_paths import (
     SOURCE_SIDECAR_NAMES,
+    artifact_file_hash,
     artifact_path_key,
     cadgen_cache_root_dir,
     result_descriptor,
@@ -788,8 +789,9 @@ def _create_step_entry(repo_root, root_path, source_path, extension) -> dict:
         document_hash, tree = snapshot
     else:
         # An unbuilt document still needs a digest for status/sidecar binding,
-        # but there is no geometry selection it could be mixed with.
-        document_hash, tree = _sha256_file(source_path), None
+        # but there is no geometry selection it could be mixed with. The lookup
+        # above has just read it into the digest memo, so this reads nothing.
+        document_hash, tree = artifact_file_hash(source_path) or "", None
     sidecar_path = source_sidecar_path(source_path)
     sidecar_stat = _file_stats(sidecar_path)
     sidecar_identity = (
