@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createHttpCadResourceProvider, SurfaceResolutionError } from '@text-to-cad/core/client';
@@ -171,6 +171,46 @@ it('keeps a failed load\'s error, and its model partial, through a detail swap',
     expect(swapped.assemblyBackgroundError).toBe(failed.assemblyBackgroundError);
     expect(swapped.assemblyBackgroundErrorMeshHash).toBe(failed.assemblyBackgroundErrorMeshHash);
     expect(swapped.assemblyInteractionReady).toBe(false);
+    opened.unmount();
+  } finally { owner.dispose(); }
+});
+
+// A part that opened warm has no SURF URL until a refinement resolves its surface, mid-load as often
+// as not. The next progressive publish put the loader's identity back, without it: the refinement's
+// payload then failed its own request, and the scheduler parked that as a failed load (the part left
+// coarse; a warm reopen of the w16 never reached standard detail, its quality state "error").
+it('keeps a surface a refinement resolved through the next progressive publish', async () => {
+  const { client, model, encoded } = warmLargeStep();
+  const probe = vi.fn(async keys => keys.map(key => encoded.get(key)?.row || null));
+  // The first batch of bodies arrives; the second waits until the refinement has resolved.
+  const held = [];
+  let reads = 0;
+  const many = vi.fn(rows => {
+    reads += 1;
+    const read = () => rows.map(row => encoded.get(row.tessellationInput)?.bytes.slice() || null);
+    return reads === 2 ? new Promise(resolve => held.push(() => resolve(read()))) : Promise.resolve(read());
+  });
+  const owner = createTessellationCache({ provider: { probeMany: probe, getProbed: vi.fn(), getManyProbed: many } });
+  const resolving = { ...client, resolveSurfaceComponents: vi.fn(async (_descriptor, requested) => new Map(
+    requested.map(({ cid, surfaceInput }) => [cid, { surfaceInput, surfaceObject: 'a'.repeat(64),
+      surfUrl: `https://cad-assets.test/__cad/store?surfaceInput=${surfaceInput}`, byteLength: 100 }]))) };
+  try {
+    const opened = renderHook(() => assets(model, resolving, owner.createSession()));
+    let loading;
+    act(() => { loading = opened.result.current.loadMeshForEntry(model); });
+    await waitFor(() => expect(opened.result.current.lodPackage?.components).toHaveLength(8));
+    await waitFor(() => expect(held).toHaveLength(1));
+    const component = opened.result.current.lodPackage.components[0];
+    expect(component.surfUrl).toBe('');
+    // What the viewport's refinement does with an empty URL (`useViewportLod`): resolve, then ask.
+    const resolved = await act(() => component.resolveSurface(new AbortController().signal));
+    const request = lodPayloadRequest({ ...component, identity: resolved.identity, surfUrl: resolved.surfUrl }, 0);
+    act(() => held.splice(0).forEach(release => release()));
+    await waitFor(() => expect(opened.result.current.lodPackage.components.length).toBeGreaterThan(8));
+    const payload = { meshData: component.meshData, lodRequest: request };
+    expect(opened.result.current.prepareComponentLodPayload(component.cid, 0, payload)).toBe(payload);
+    await act(() => loading);
+    expect(opened.result.current.meshState.meshData.parts).toHaveLength(317);
     opened.unmount();
   } finally { owner.dispose(); }
 });

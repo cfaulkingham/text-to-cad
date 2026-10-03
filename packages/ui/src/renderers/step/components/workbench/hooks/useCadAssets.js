@@ -1150,7 +1150,17 @@ export function useCadAssets({
                 complete: final
               };
             }
-            lodPackageRef.current.componentIdentityByCid = Object.fromEntries(componentIdentityByCid);
+            // A part that opened warm has no SURF URL until a refinement resolves its surface
+            // (`resolveSurface`, which records the exact identity here). The loader never hears of
+            // it, so this publish keeps each identity resolved since: reset to the loader's, the
+            // refinement's payload no longer matched its own request and was dropped as aborted,
+            // which the scheduler counts as a failed load -- the part left coarse, and a warm
+            // reopen never reaching standard detail.
+            const identities = Object.fromEntries(componentIdentityByCid);
+            for (const [cid, identity] of Object.entries(lodPackageRef.current.componentIdentityByCid || {})) {
+              if (identity?.surfUrl && !identities[cid]?.surfUrl) identities[cid] = identity;
+            }
+            lodPackageRef.current.componentIdentityByCid = identities;
             const publishedCtx = lodPackageRef.current;
             publishedCtx.publishCount = publishCount;
             publishedCtx.meshHash = nextState.meshHash;
