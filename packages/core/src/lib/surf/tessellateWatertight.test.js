@@ -135,6 +135,14 @@ for (const fixture of ["sun_gear", "mixed"]) {
 // cell as a stack of slivers; their refined chords left vertices microns inside
 // the rim, and the conformity pass folded triangles over them — one triangle
 // emitted twice, edges on four faces. Every tolerance failed somewhere.
+//
+// half_disc is a half-round puck (a 20 mm-radius cylinder halved through its
+// axis, 10 mm thick). Each flat end is bounded by only two model edges, the arc
+// and its diameter, so the diameter's two ends lie on both. The conformity pass
+// split the diameter, which runs along the line, with the ARC's points, and its
+// weld folded that fan into the arc's own vertices: each end came out half
+// folded over itself (edges on three triangles, the volume a third short), what
+// the hypercar's tub showed as hatched streaks on its rear bulkhead in Render.
 function meshDefects(name, options) {
   const { index, floats } = loadFixture(name);
   const component = tessellateComponent(index, floats, { ...options, collectBoundaryDebug: true });
@@ -189,6 +197,7 @@ for (const [fixture, chordTolerance] of [
   ["curved_wall_hole", undefined],
   ["curved_wall_hole", 1e-2],
   ["curved_wall_hole", 2e-2],
+  ["half_disc", undefined],
 ]) {
   const label = chordTolerance === undefined ? "default tolerance" : `chord ${chordTolerance}`;
   test(`${fixture} @ ${label}: no degenerate or duplicated triangles, every edge shared by two`, () => {

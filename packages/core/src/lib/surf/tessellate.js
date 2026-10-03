@@ -41,7 +41,7 @@ import { cos, sin } from "./trig.js";
 // cadgen/store/meshes.py, which is the one that builds and validates the key —
 // bumping only the first leaves the store rejecting every entry the new
 // algorithm writes.
-export const TESSELLATION_VERSION = 5;
+export const TESSELLATION_VERSION = 6;
 
 export const DEFAULT_OPTIONS = {
   // Max 3D distance between the surface and a triangle edge midpoint,
@@ -1654,22 +1654,49 @@ function conformBoundaries(rawFaces, sharedEdges, floats, mergeTolerance = 0) {
       minted.set(key, id);
       return id;
     };
+    // This face's own boundary points on each model edge, for telling which of
+    // several edges a mesh edge runs along (below).
+    const ownFractions = new Map();
+    for (const labels of boundary.values()) {
+      for (const { ord, f } of labels) {
+        let list = ownFractions.get(ord);
+        if (!list) ownFractions.set(ord, (list = []));
+        list.push(f);
+      }
+    }
+    const holdsVertexBetween = (ord, fp, fq) => {
+      const own = ownFractions.get(ord) || [];
+      const eps = fractionEps(ord);
+      if (sharedEdges.get(ord)?.closed) {
+        const forward = (fq - fp + 1) % 1;
+        const start = forward <= 0.5 ? fp : fq;
+        const arc = forward <= 0.5 ? forward : (fp - fq + 1) % 1;
+        return own.some((f) => {
+          const d = (f - start + 1) % 1;
+          return d > eps && d < arc - eps;
+        });
+      }
+      return own.some((f) => f > Math.min(fp, fq) + eps && f < Math.max(fp, fq) - eps);
+    };
     const insertsFor = (p, q) => {
       const labelsP = boundary.get(p);
       const labelsQ = boundary.get(q);
       if (!labelsP || !labelsQ) return null;
       if (edgeUse.get(pairKey(p, q)) !== 1) return null;
-      let bp = null;
-      let bq = null;
+      const common = [];
       for (const lp of labelsP) {
         const lq = labelsQ.find((label) => label.ord === lp.ord);
-        if (lq) {
-          bp = lp;
-          bq = lq;
-          break;
-        }
+        if (lq) common.push([lp, lq]);
       }
-      if (!bp || !bq) return null;
+      if (!common.length) return null;
+      // A face bounded by just two model edges (an arc and its chord, say) has
+      // both corners on both, and the mesh edge between the corners runs along
+      // only one of them: the one on which this face has no point between them.
+      // Taking whichever came first split the chord with the ARC's points, and
+      // the weld below folded that fan into the arc's own vertices: the face
+      // rendered and exported half folded over itself.
+      const [bp, bq] = common.length === 1 ? common[0]
+        : common.find(([lp, lq]) => !holdsVertexBetween(lp.ord, lp.f, lq.f)) ?? common[0];
       const union = fractionsByOrd.get(bp.ord);
       if (!union) return null;
       const shared = sharedEdges.get(bp.ord);
