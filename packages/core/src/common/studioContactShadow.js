@@ -4,16 +4,24 @@
 // from it. A studio grounds a product this way; a shadow map alone gives one
 // hard-edged slab at a single softness.
 //
-// It is baked into one small texture whenever the studio's shadows are re-rendered
-// (the key's shadow pass marks it stale) and never on a frame that only moved the
-// camera; the floor then draws it with one texture read. The interactive viewer
-// re-renders shadows only when the scene changes, the snapshot renderer on every
-// frame, and both get the same picture.
+// It is baked into one small texture the floor draws with one texture read, in two
+// steps. HEIGHTS: a depth map of the shadow casters rendered UP through the floor by
+// a light that is never added to the scene (it lights nothing and no material samples
+// it; three's own shadow pass draws it, so it sees exactly what casts the key's shadow:
+// visibility, clipping, instancing and deformation included). This is the expensive
+// step, a draw of every caster. COMPOSITE: three small full-screen passes that turn
+// the heights and the key light's own shadow map into the floor's texture.
 //
-// Heights come from a depth map rendered UP through the floor by a light that is
-// never added to the scene: it lights nothing and no material samples it, and
-// three's own shadow pass draws it, so it sees exactly what casts the key's
-// shadow (visibility, clipping, instancing and deformation included).
+// Both steps are due once the key's shadows were re-rendered (its shadow pass marks
+// them stale: the casters or the key changed), and nothing is due on a frame that
+// re-rendered no shadows (one that only moved the camera or changed a highlight). The
+// composite then runs on that frame, so the key's cast shadow on the floor follows
+// every frame of a moving model. With a `heightInterval` the heights follow a scene
+// that keeps changing at most that often, and once more, through `requestFrame`, when
+// it stops: what is shown at rest is exact, and while a routine plays or a pose is
+// dragged, only the contact darkening lags, by up to that interval. The snapshot
+// renderer passes no interval and bakes both steps on every frame that re-renders
+// shadows. A floor drawn at zero opacity is not drawn at all, so it bakes nothing.
 
 const PREP_FRAGMENT = /* glsl */ `
 uniform sampler2D uContactDepth;
@@ -159,6 +167,54 @@ function eachMaterial(object, visit) {
   for (const material of materials) if (material) visit(material);
 }
 
+const defaultNow = () => (typeof performance !== "undefined" && typeof performance.now === "function"
+  ? performance.now() : Date.now());
+
+/**
+ * When stale heights are rendered: at once, or, with an `interval` in milliseconds, no
+ * sooner than that after the last time, asking for the frame that will render them
+ * (`requestFrame`) so the last change is always rendered. Scheduling only: a test drives
+ * it with its own clock (`now`) and timer (`setTimer`, `clearTimer`).
+ */
+export function createHeightSchedule({
+  interval = 0,
+  requestFrame = null,
+  now = defaultNow,
+  setTimer = (callback, ms) => setTimeout(callback, ms),
+  clearTimer = (id) => clearTimeout(id)
+} = {}) {
+  const wait = Math.max(0, Number(interval) || 0);
+  let last = -Infinity;
+  let timer = null;
+  return {
+    /** Whether heights may be rendered now. When not, the frame that may is asked for. */
+    due() {
+      const remaining = last + wait - now();
+      // Within a millisecond is due: a timer's clock and `now` need not agree closer.
+      if (remaining < 1) return true;
+      if (timer === null && typeof requestFrame === "function") {
+        timer = setTimer(() => {
+          timer = null;
+          requestFrame();
+        }, remaining);
+      }
+      return false;
+    },
+    /** Heights were rendered now: the interval starts again. */
+    rendered() {
+      last = now();
+    },
+    /** The next heights are due at once. */
+    reset() {
+      last = -Infinity;
+    },
+    dispose() {
+      if (timer !== null) clearTimer(timer);
+      timer = null;
+    }
+  };
+}
+
 /**
  * Create the floor shadow for one photographic studio. `keyLight` is the studio's
  * shadow-casting key. Add `object` to the studio; call `place()` whenever the floor
@@ -167,11 +223,21 @@ function eachMaterial(object, visit) {
  * `strength` is how dark each part gets at its darkest: contact, broad occlusion,
  * the key's shadow near the model and away from it. `blur` gives the narrow, medium
  * and wide kernels as fractions of the baked square's width.
+ *
+ * `heightInterval` (milliseconds, default 0: every time) is how often the heights may
+ * follow a scene that keeps changing; `requestFrame` asks the caller for a frame (one
+ * that need not re-render shadows) to render the heights it deferred. `now`, `setTimer`
+ * and `clearTimer` replace the clock and timer, for tests.
  */
 export function createStudioContactShadow(THREE, keyLight, {
   size = 512,
   strength = { contact: 0.75, occlusion: 0.5, key: 0.75, keyFar: 0.35 },
-  blur = { narrow: 0.012, medium: 0.03, wide: 0.06 }
+  blur = { narrow: 0.012, medium: 0.03, wide: 0.06 },
+  heightInterval = 0,
+  requestFrame = null,
+  now,
+  setTimer,
+  clearTimer
 } = {}) {
   const object = new THREE.Group();
   object.name = "studio-contact-shadow";
@@ -232,8 +298,9 @@ export function createStudioContactShadow(THREE, keyLight, {
   layer.renderOrder = -2;
   object.add(layer);
 
-  // Drawn by every shadow pass and by nothing else (a triangle of zero area): it
-  // notices when the key's shadows were re-rendered, which is when the bake is stale.
+  // A shadow caster of zero area: every shadow pass draws it (as does the main pass;
+  // it rasterizes nothing in either), so it notices each time the key's shadows are
+  // re-rendered, which is when the bake is stale.
   const sentinelGeometry = new THREE.BufferGeometry();
   sentinelGeometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(9), 3));
   const sentinel = new THREE.Mesh(sentinelGeometry, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
@@ -242,9 +309,17 @@ export function createStudioContactShadow(THREE, keyLight, {
   sentinel.frustumCulled = false;
   object.add(sentinel);
 
-  const state = { stale: true, enabled: true, rect: null, floorDepth: 0, placement: "" };
+  const schedule = createHeightSchedule({ interval: heightInterval, requestFrame, now, setTimer, clearTimer });
+  const state = {
+    heightsStale: true, compositeStale: true, heightsReady: false, heightsFloorDepth: 0,
+    enabled: true, opacity: 1, rect: null, floorDepth: 0, placement: ""
+  };
+  const markStale = () => {
+    state.heightsStale = true;
+    state.compositeStale = true;
+  };
   sentinel.onBeforeShadow = (renderer, object3d, camera, shadowCamera) => {
-    if (shadowCamera !== light.shadow.camera) state.stale = true;
+    if (shadowCamera !== light.shadow.camera) markStale();
   };
 
   function renderHeights(shadowMap, scene, camera) {
@@ -268,17 +343,15 @@ export function createStudioContactShadow(THREE, keyLight, {
       for (const [material, side] of sides) material.shadowSide = side;
       shadowMap.needsUpdate = needsUpdate;
     }
+    // The composite reads these heights with the placement they were measured at.
+    state.heightsFloorDepth = state.floorDepth;
+    state.heightsReady = true;
   }
 
-  function bake(renderer, scene, camera) {
-    const shadowMap = renderer.shadowMap;
-    if (!state.rect || !shadowMap?.enabled) return;
-    state.stale = false;
-    renderHeights(shadowMap, scene, camera);
-
+  function composite(renderer, shadowMap) {
     const uniforms = prep.uniforms;
     uniforms.uContactMatrix.value.copy(light.shadow.matrix);
-    uniforms.uFloorDepth.value = state.floorDepth;
+    uniforms.uFloorDepth.value = state.heightsFloorDepth;
     const keyMap = keyLight.shadow?.map?.depthTexture || null;
     uniforms.uKeyEnabled.value = keyLight.visible && keyLight.castShadow && keyMap ? 1 : 0;
     uniforms.uKeyMap.value = keyMap;
@@ -306,14 +379,35 @@ export function createStudioContactShadow(THREE, keyLight, {
       renderer.autoClear = previousAutoClear;
       shadowMap.autoUpdate = previousShadowAutoUpdate;
     }
+    state.compositeStale = false;
     layer.material.uniforms.uReady.value = 1;
   }
 
   // The bake runs where the floor is drawn, after this frame's shadow pass, so it
-  // reads the key's fresh shadow map; a frame that re-rendered no shadows skips it.
+  // reads the key's fresh shadow map; a frame that re-rendered no shadows has nothing
+  // stale, and a hidden floor (off, or at zero opacity) is not drawn, so bakes nothing.
   layer.onBeforeRender = (renderer, scene, camera) => {
-    if (state.stale) bake(renderer, scene, camera);
+    if (!state.heightsStale && !state.compositeStale) return;
+    const shadowMap = renderer.shadowMap;
+    if (!state.rect || !shadowMap?.enabled) return;
+    if (state.heightsStale && schedule.due()) {
+      renderHeights(shadowMap, scene, camera);
+      schedule.rendered();
+      state.heightsStale = false;
+      state.compositeStale = true;
+    }
+    if (state.compositeStale && state.heightsReady) composite(renderer, shadowMap);
   };
+
+  function showLayer() {
+    const visible = state.enabled && state.opacity > 0;
+    // Shown again after the scene may have changed unseen: bake it at once.
+    if (visible && !layer.visible) {
+      markStale();
+      schedule.reset();
+    }
+    layer.visible = visible;
+  }
 
   return {
     object,
@@ -351,20 +445,22 @@ export function createStudioContactShadow(THREE, keyLight, {
       layer.position.set(center[0], center[1], floorZ);
       layer.scale.set(2 * half, 2 * half, 1);
       layer.updateMatrixWorld(true);
-      state.stale = true;
+      markStale();
     },
     setOpacity(opacity) {
       layer.material.uniforms.uOpacity.value = opacity;
+      state.opacity = opacity;
+      showLayer();
     },
     setEnabled(enabled) {
-      if (enabled && !state.enabled) state.stale = true;
       state.enabled = enabled;
-      layer.visible = enabled;
+      showLayer();
     },
     get stale() {
-      return state.stale;
+      return state.heightsStale || state.compositeStale;
     },
     dispose() {
+      schedule.dispose();
       object.removeFromParent();
       depthTarget.depthTexture?.dispose();
       depthTarget.dispose();

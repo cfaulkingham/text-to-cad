@@ -141,7 +141,10 @@ function createState(THREE, runtime) {
   };
 }
 
-function updateGround(THREE, state, configuration, bounds, sceneScale, extentBounds = bounds) {
+function updateGround(THREE, state, configuration, bounds, sceneScale, extentBounds = bounds, {
+  contactShadow = {},
+  softwareRendering = false
+} = {}) {
   if (!configuration.backdrop.ground) {
     disposeGround(state);
     return;
@@ -181,8 +184,10 @@ function updateGround(THREE, state, configuration, bounds, sceneScale, extentBou
     ground.renderOrder = -3;
     state.group.add(ground);
     state.ground = ground;
-    if (kind === "physical") {
-      state.contactShadow = createStudioContactShadow(THREE, state.keyLight);
+    // Software rendering casts no key shadow (`updateKeyLight`) to spare a depth pass; the
+    // floor shadow's own depth pass and full-screen passes are spared with it.
+    if (kind === "physical" && !softwareRendering) {
+      state.contactShadow = createStudioContactShadow(THREE, state.keyLight, contactShadow);
       state.group.add(state.contactShadow.object);
     }
     state.groundKind = kind;
@@ -310,12 +315,19 @@ function updateRendererAndScene(THREE, runtime, state, configuration) {
  * `bounds` is the model as it is now: the key light, its shadow and a floor kept at
  * the lowest point follow it. `groundBounds` (default: `bounds`) is what the floor's
  * size and centre are taken from; a viewer passes the model's REST placement.
+ *
+ * `contactShadow` is how the floor shadow is baked (`createStudioContactShadow`): an
+ * interactive viewer passes a `heightInterval` and its `requestFrame`, so a moving model
+ * re-measures its heights at most that often; without them (a snapshot) every frame that
+ * re-renders shadows bakes them. A runtime that renders in software (`softwareRendering`)
+ * gets no floor shadow: its key casts none either.
  */
 export function applyPhotographicStudio(THREE, runtime, configuration = {}, {
   bounds = runtime?.modelBounds,
   groundBounds = null,
   sceneScale = "cad",
-  shadowMapSize = 2048
+  shadowMapSize = 2048,
+  contactShadow = {}
 } = {}) {
   if (!THREE || !runtime?.scene || !runtime?.renderer) {
     throw new Error("applyPhotographicStudio requires THREE and a runtime with scene and renderer");
@@ -338,7 +350,8 @@ export function applyPhotographicStudio(THREE, runtime, configuration = {}, {
     runtime.softwareRendering === true
   );
   updateGround(THREE, state, resolved, resolvedBounds, sceneScale,
-    groundBounds ? resolveBounds(groundBounds, runtime.modelRadius) : resolvedBounds);
+    groundBounds ? resolveBounds(groundBounds, runtime.modelRadius) : resolvedBounds,
+    { contactShadow, softwareRendering: runtime.softwareRendering === true });
 
   runtime.invalidateShadows?.();
   runtime.requestRender?.();

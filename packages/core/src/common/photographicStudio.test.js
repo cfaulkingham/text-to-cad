@@ -385,6 +385,40 @@ test("the physical floor carries a soft contact shadow fitted to the rest placem
 });
 
 
+test("a software-rendered viewer gets no floor shadow, and a viewer's bake schedule reaches the one it gets", () => {
+  const software = runtime();
+  software.softwareRendering = true;
+  const spared = applyPhotographicStudio(THREE, software, configuration());
+  assert.equal(spared.keyLight.castShadow, false);
+  assert.equal(spared.ground.material.isMeshStandardMaterial, true, "the floor itself stays");
+  assert.equal(spared.contactShadow, null, "no probe depth pass and no bake passes");
+  disposePhotographicStudio(software);
+
+  // With an interval, a second key pass inside it composites and leaves the heights owed.
+  const timers = [];
+  const value = runtime();
+  const state = applyPhotographicStudio(THREE, value, configuration(), {
+    contactShadow: {
+      heightInterval: 100, now: () => 0, requestFrame: () => {},
+      setTimer: (callback, ms) => timers.push(ms), clearTimer: () => {}
+    }
+  });
+  const heights = [];
+  const renderer = {
+    autoClear: true,
+    shadowMap: { enabled: true, autoUpdate: false, needsUpdate: false, render(lights) { heights.push(lights[0].name); } },
+    getRenderTarget() { return null; }, setRenderTarget() {}, render() {}
+  };
+  const contact = state.contactShadow;
+  const camera = new THREE.PerspectiveCamera();
+  contact.layer.onBeforeRender(renderer, value.scene, camera);
+  contact.sentinel.onBeforeShadow(renderer, contact.sentinel, camera, state.keyLight.shadow.camera);
+  contact.layer.onBeforeRender(renderer, value.scene, camera);
+  assert.deepEqual(heights, ["studio-contact-shadow-probe"]);
+  assert.deepEqual(timers, [100]);
+  disposePhotographicStudio(value);
+});
+
 test("background and floor updates retain the neutral owner's current reflection intensity", () => {
   const value = runtime();
   value.scene.environmentIntensity = 0;

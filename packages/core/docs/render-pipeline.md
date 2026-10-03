@@ -178,15 +178,26 @@ darkest where the model meets the floor, a broad occlusion fading with height,
 and the key's cast shadow crisp near the model and softening into a wide, light
 penumbra away from it. The layer is one texture over a square fitted to the
 rest placement (`PHOTOGRAPHIC_STUDIO_CONTACT_SHADOW`), as deep as the floor is
-opaque, and hidden while the studio's lighting is off. It is baked by a depth
-pass of the shadow casters seen up through the floor plus three small
-full-screen passes, only when the key's shadows re-render — a shadow-less
-sentinel in the scene notices that pass — so the interactive viewer, which
-reuses its shadow map on frames that only move the camera, bakes nothing on
-those frames, and the snapshot renderer, which renders shadows every frame,
-bakes every frame. The probe light that renders the heights is never added to
-the scene. A transparent legacy backdrop's floor stays a `ShadowMaterial`
-catcher of the key's shadow.
+opaque, and hidden while the studio's lighting is off; a floor at zero opacity
+is not drawn, so it bakes nothing. It is baked in two steps: the heights, a
+depth pass of the shadow casters seen up through the floor by a probe light
+that is never added to the scene, and the composite, three small full-screen
+passes over those heights and the key's own shadow map. Both are due only when
+the key's shadows re-render: a sentinel in the studio, a shadow caster of zero
+area that every shadow pass and the main pass draw (it rasterizes nothing in
+either), notices that pass. The composite runs in that frame, so the key's cast
+shadow on the floor follows every frame a model moves in. The heights do too,
+unless the caller passes a `heightInterval` (`applyPhotographicStudio`'s
+`contactShadow` option): then a scene that keeps changing re-measures them at
+most that often, and once more when it stops, in a frame the layer asks for
+(`requestFrame`), so what is shown at rest is exact and only the contact
+darkening lags while a model moves. The interactive viewer re-renders shadows
+only for a change that can alter them, never for a camera move or a highlight,
+so it bakes nothing on those frames; the snapshot renderer, which renders
+shadows every frame and passes no interval, bakes both steps every frame. A
+runtime that renders in software (`softwareRendering`) gets no contact layer:
+its key casts no shadow either. A transparent legacy backdrop's floor stays a
+`ShadowMaterial` catcher of the key's shadow.
 
 Environment radiance and direct illumination are calibrated together at zero EV
 across colored assemblies, gray mechanical models, and authored metal/plastic

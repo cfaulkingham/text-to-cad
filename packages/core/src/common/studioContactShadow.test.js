@@ -33,11 +33,11 @@ function rendererStub() {
   return renderer;
 }
 
-function studio() {
+function studio(options = {}) {
   const scene = new THREE.Scene();
   const keyLight = new THREE.SpotLight(0xffffff, 1);
   keyLight.castShadow = true;
-  const contact = createStudioContactShadow(THREE, keyLight);
+  const contact = createStudioContactShadow(THREE, keyLight, options);
   scene.add(contact.object);
   const part = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
   part.castShadow = true;
@@ -73,6 +73,98 @@ test("the floor shadow bakes after the key's shadows re-render, never on a camer
   frame();
   assert.equal(renderer.calls.heights, 2);
   assert.equal(contact.stale, false);
+});
+
+// A clock and a timer the test turns by hand: no sleeps, no wall clock.
+function manualTime() {
+  const time = { now: 0, timers: [], frames: 0 };
+  time.options = {
+    now: () => time.now,
+    setTimer: (callback, ms) => { time.timers.push({ callback, at: time.now + ms }); return time.timers.length; },
+    clearTimer: (id) => { time.timers[id - 1] = null; },
+    requestFrame: () => { time.frames += 1; }
+  };
+  time.advance = (ms) => {
+    time.now += ms;
+    for (let index = 0; index < time.timers.length; index += 1) {
+      const timer = time.timers[index];
+      if (timer && timer.at <= time.now) { time.timers[index] = null; timer.callback(); }
+    }
+  };
+  time.pending = () => time.timers.filter(Boolean).length;
+  return time;
+}
+
+test("while the scene keeps changing the key's shadow composites every frame, the heights at most once an interval and once more at rest", () => {
+  const time = manualTime();
+  const { scene, keyLight, contact, camera } = studio({ heightInterval: 100, ...time.options });
+  const renderer = rendererStub();
+  const keyPass = () => contact.sentinel.onBeforeShadow(renderer, contact.sentinel, camera, keyLight.shadow.camera);
+  const frame = () => contact.layer.onBeforeRender(renderer, scene, camera);
+
+  frame();
+  assert.deepEqual([renderer.calls.heights, renderer.calls.passes], [1, 3], "the first bake is whole and immediate");
+
+  // A routine plays: every frame re-renders the key's shadows.
+  for (let step = 1; step <= 5; step += 1) {
+    time.advance(16);
+    keyPass();
+    frame();
+  }
+  assert.equal(renderer.calls.heights, 1, "no height pass within the interval");
+  assert.equal(renderer.calls.passes, 3 + 5 * 3, "the key's cast shadow is composited on every frame");
+  assert.equal(time.pending(), 1, "one frame is asked for, for when the heights are due");
+
+  // t = 100: the interval has passed. The asked-for frame and the routine's next coincide.
+  time.advance(20);
+  assert.equal(time.frames, 1);
+  keyPass();
+  frame();
+  assert.equal(renderer.calls.heights, 2, "due again once the interval has passed");
+  assert.equal(time.pending(), 0);
+
+  // The routine stops between two height passes: the last pose's heights are still owed.
+  time.advance(16);
+  keyPass();
+  frame();
+  assert.equal(renderer.calls.heights, 2);
+  assert.equal(contact.stale, true);
+  time.advance(100);
+  assert.equal(time.frames, 2, "the frame that renders them is asked for");
+  frame();
+  assert.equal(renderer.calls.heights, 3);
+  assert.equal(contact.stale, false, "exact at rest");
+  const passes = renderer.calls.passes;
+  frame();
+  time.advance(500);
+  frame();
+  assert.equal(renderer.calls.passes, passes, "at rest nothing more is baked");
+  assert.equal(time.frames, 2);
+});
+
+test("a floor at zero opacity is not drawn, so it bakes nothing; shown again it bakes at once", () => {
+  const time = manualTime();
+  const { scene, keyLight, contact, camera } = studio({ heightInterval: 100, ...time.options });
+  const renderer = rendererStub();
+  const frame = () => { if (contact.layer.visible) contact.layer.onBeforeRender(renderer, scene, camera); };
+  frame();
+  contact.setOpacity(0);
+  assert.equal(contact.layer.visible, false);
+  time.advance(16);
+  contact.sentinel.onBeforeShadow(renderer, contact.sentinel, camera, keyLight.shadow.camera);
+  frame();
+  assert.deepEqual([renderer.calls.heights, renderer.calls.passes], [1, 3]);
+  assert.equal(time.pending(), 0, "nothing is owed while nothing is drawn");
+
+  contact.setOpacity(0.6);
+  assert.equal(contact.layer.visible, true);
+  frame();
+  assert.deepEqual([renderer.calls.heights, renderer.calls.passes], [2, 6], "within the interval, still at once");
+  assert.equal(contact.stale, false);
+  contact.setOpacity(0.6);
+  frame();
+  assert.equal(renderer.calls.passes, 6, "an unchanged opacity re-bakes nothing");
+  contact.dispose();
 });
 
 test("the bake restores the renderer and draws single-sided casters double-sided for its own pass only", () => {
