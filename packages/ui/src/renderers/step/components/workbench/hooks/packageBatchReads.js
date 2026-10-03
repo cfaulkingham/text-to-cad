@@ -10,9 +10,9 @@
 
 import { SURFACE_REQUEST_MAX_COMPONENTS } from "@text-to-cad/core/client";
 import {
-  TESS_BATCH_MAX_BYTES,
   TESS_PROBE_MAX_KEYS,
   TessellationCacheProbeMissError,
+  tessBatchMaxBytes,
 } from "@text-to-cad/core/lib/surf/tessellationCache.js";
 import { PROGRESSIVE_PUBLISH_FIRST_BYTES, PROGRESSIVE_PUBLISH_FIRST_COMPONENTS } from "./packageProgressiveLoad.js";
 
@@ -26,15 +26,19 @@ function abortError() {
 const BATCH_HEADER_BYTES = 12;
 const framedEntryBytes = row => 4 + ((Number(row.byteLength) + 3) & ~3);
 
-/** The ceilings of the `index`th batch: the first publish's, doubling up to the server's bounds. */
+/**
+ * The ceilings of the `index`th batch: the first publish's, doubling up to the server's bounds.
+ * `maxBytes` is the transport's ceiling (the cache's `batchMaxBytes`), which can lower the
+ * server's byte bound and never raise it (`tessBatchMaxBytes`).
+ */
 export function batchCeilings(index, {
   firstComponents = PROGRESSIVE_PUBLISH_FIRST_COMPONENTS, firstBytes = PROGRESSIVE_PUBLISH_FIRST_BYTES,
-  maxComponents = TESS_PROBE_MAX_KEYS, maxBytes = TESS_BATCH_MAX_BYTES,
+  maxComponents = TESS_PROBE_MAX_KEYS, maxBytes,
 } = {}) {
   const growth = 2 ** Math.max(0, Math.min(30, Number(index) || 0));
   return {
     components: Math.max(1, Math.min(maxComponents, firstComponents * growth)),
-    bytes: Math.max(1, Math.min(maxBytes, firstBytes * growth)),
+    bytes: Math.max(1, Math.min(tessBatchMaxBytes(maxBytes), firstBytes * growth)),
   };
 }
 
@@ -96,7 +100,7 @@ export function createTessellationBodyBatches({
       if (!row || batchOf.has(cid) || skip(cid, row)) { considered = index; continue; }
       const entryBytes = framedEntryBytes(row);
       // A body no batch can carry is its lane's to read, as every body was.
-      if (BATCH_HEADER_BYTES + entryBytes > (limits.maxBytes ?? TESS_BATCH_MAX_BYTES)) { considered = index; continue; }
+      if (BATCH_HEADER_BYTES + entryBytes > tessBatchMaxBytes(limits.maxBytes)) { considered = index; continue; }
       if (members.length >= ceilings.components || (members.length && bytes + entryBytes > ceilings.bytes)) break;
       members.push({ cid, row, slot: members.length, done: false });
       bytes += entryBytes;

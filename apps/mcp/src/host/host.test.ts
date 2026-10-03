@@ -8,7 +8,7 @@ import { chatReach, createChatPromptContext } from './prompt';
 import { relaunch } from './relaunch';
 import { createServer, type SyncReply, type SyncRequest, type ViewEvent } from './server';
 import { createViewSync, LOST_AFTER, NEWS_MS, SYNC_MS } from './sync';
-import { createTunnelFetch, decodeBase64, encodeBase64, TUNNEL_ORIGIN } from './tunnel';
+import { createTunnelClient, createTunnelFetch, decodeBase64, encodeBase64, TUNNEL_BATCH_MAX_BYTES, TUNNEL_ORIGIN } from './tunnel';
 
 /** A host frame: records what the page posts and answers with `respond`. */
 function fakeHost(respond: (message: any) => unknown) {
@@ -259,6 +259,19 @@ describe('the fetch tunnel', () => {
   it('turns a failed call into the TypeError fetch throws', async () => {
     const tunnel = createTunnelFetch(createServer({ callTool: async () => ({ isError: true, content: [{ type: 'text', text: 'not this thread' }] }) }), { kind: 'workspace', path: '/p' });
     await expect(tunnel(`${TUNNEL_ORIGIN}/__cad/catalog`)).rejects.toThrow(TypeError);
+  });
+
+  it('gives the app a CAD client whose batched reads ask for no more than the tunnel carries', () => {
+    const client = createTunnelClient(createTunnelFetch(createServer({ callTool: async () => ({}) }), { kind: 'workspace', path: '/p' }));
+    const session = client.createRenderSession();
+    try {
+      expect(TUNNEL_BATCH_MAX_BYTES).toBe(8 * 1024 * 1024);
+      expect(session.tessellationCache.batchMaxBytes).toBe(TUNNEL_BATCH_MAX_BYTES);
+      expect(client.origin).toBe(TUNNEL_ORIGIN);
+    } finally {
+      session.dispose();
+      client.dispose();
+    }
   });
 });
 

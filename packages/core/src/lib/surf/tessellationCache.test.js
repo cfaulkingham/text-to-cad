@@ -15,6 +15,8 @@ import {
   resolvedTessellationIdentity,
   createTessellationCache,
   surfIndexFromCacheEntry,
+  TESS_BATCH_MAX_BYTES,
+  tessBatchMaxBytes,
   tessellationCacheKey,
   tessellationQuality,
   tessellationPayloadFacts,
@@ -378,6 +380,27 @@ test("an HTTP batch read verifies each entry on its own: a damaged one is a miss
   const bodies = await provider.getManyProbed(rows, { maxBytes: container.byteLength });
   assert.deepEqual(bodies[0], entries[0]);
   assert.equal(bodies[1], null);
+});
+
+test("a transport's batch ceiling lowers the server's bound and never raises it", async () => {
+  const MIB = 1024 * 1024;
+  assert.equal(TESS_BATCH_MAX_BYTES, 32 * MIB);
+  assert.deepEqual([8 * MIB, 64 * MIB, undefined, 0, -1, Number.NaN, 2.5].map(tessBatchMaxBytes),
+    [8 * MIB, 32 * MIB, 32 * MIB, 32 * MIB, 32 * MIB, 32 * MIB, 32 * MIB]);
+  // A client's provider declares its transport's ceiling; the cache and its sessions report it.
+  let fetched = 0;
+  const provider = createHttpTessellationCacheProvider({ origin: "http://cache.test", maxBatchBytes: 8 * MIB,
+    fetch: async () => { fetched += 1; return new Response(null, { status: 500 }); } });
+  const cache = createTessellationCache({ provider });
+  assert.deepEqual([provider.maxBatchBytes, cache.batchMaxBytes, cache.createSession().batchMaxBytes], [8 * MIB, 8 * MIB, 8 * MIB]);
+  assert.equal(createTessellationCache({ provider: createHttpTessellationCacheProvider() }).batchMaxBytes, 32 * MIB);
+  // And the provider asks for no batch over it, whatever its caller allows.
+  const row = validateTessellationProbeRow({ schemaVersion: 1,
+    object: createHash("sha256").update(encodedEntry()).digest("hex"), ...tessellationPayloadFacts(encodedEntry()) });
+  const over = Array.from({ length: Math.ceil((8 * MIB) / row.byteLength) + 1 }, () => row);
+  assert.equal(await provider.getManyProbed(over, { maxBytes: 32 * MIB }), null);
+  assert.equal(fetched, 0);
+  cache.dispose();
 });
 
 test("bounded probes retain other chunks when one metadata response is unavailable", async (t) => {

@@ -195,7 +195,9 @@ entity tag of the copy it holds (`If-None-Match`), and a 304 is that copy: nothi
 is read or published again. `dispose()` stops polling, aborts
 requests and disposes render sessions. The client lazily owns its cache provider
 and bounded write-back queue; each render session borrows a cancellable cache
-view and owns its abort signal and worker leases. Switching views preserves
+view and owns its abort signal and worker leases. A host whose transport
+carries large replies slowly passes `maxBatchBytes`: no batched read asks for
+more, nor ever more than the server's own bound. Switching views preserves
 admitted cache writes, while disposing the client releases them. Root identity
 comes from the server's stable
 `rootId`, not its port. Multiple roots render concurrently without replacing

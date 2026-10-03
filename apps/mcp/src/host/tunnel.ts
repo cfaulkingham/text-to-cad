@@ -1,3 +1,5 @@
+import { createCadClient } from '@text-to-cad/core/client';
+import type { CadClientOptions } from '@text-to-cad/core/client';
 import type { HttpReply, Root, Server } from './server';
 
 /**
@@ -8,6 +10,15 @@ import type { HttpReply, Root, Server } from './server';
 export const TUNNEL_ORIGIN = 'http://cad.invalid';
 
 const NULL_BODY = new Set([101, 103, 204, 205, 304]);
+
+/**
+ * The most bytes one batched read asks for through the tunnel. Every reply crosses the host's
+ * JSON-RPC channel as base64 inside a tool result, 4/3 of its size: the client's own bound, a
+ * 32 MiB batch of tessellation bodies, is a 44.7 MB message. Codex carries those at about
+ * 60 MB/s; what other hosts (Claude Desktop, VS Code) allow one message is not known, so a batch
+ * here stays at 8 MiB, an 11.2 MB message, which every host tried has carried.
+ */
+export const TUNNEL_BATCH_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
  * A `cad_http` reply. `encoding: 'gzip'`: the server gzipped a JSON body for the trip
@@ -70,4 +81,9 @@ export function createTunnelFetch(server: Pick<Server, 'http'>, root: Pick<Root,
     const bytes = method === 'HEAD' || NULL_BODY.has(reply.status) ? null : await replyBody(reply);
     return new Response(bytes, { status: reply.status, headers: reply.headers });
   };
+}
+
+/** A CAD client whose requests travel over `cad_http` (`tunnel`), its batched reads within `TUNNEL_BATCH_MAX_BYTES`. */
+export function createTunnelClient(tunnel: typeof fetch, options: Omit<CadClientOptions, 'origin' | 'fetch' | 'maxBatchBytes'> = {}) {
+  return createCadClient({ ...options, origin: TUNNEL_ORIGIN, fetch: tunnel, maxBatchBytes: TUNNEL_BATCH_MAX_BYTES });
 }

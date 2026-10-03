@@ -103,6 +103,9 @@ reference host `basic-host` does.
   that sends each request as a `cad_http` tool call against the placeholder
   origin `http://cad.invalid`; the server hands it to the viewer's own router.
   The fetch is a distinct function, so workers are handed bytes rather than URLs.
+  A reply crosses the host's channel as base64, so the client asks for batched
+  reads of at most 8 MiB (`TUNNEL_BATCH_MAX_BYTES`, `createTunnelClient`) where
+  the web client asks for 32 MiB.
 - **One file.** The build inlines scripts, styles, workers (as blobs) and the
   drawing editor's fonts (as data URIs) into `dist/index.html`, and fails if
   anything would be left outside it: the host serves one resource and nothing

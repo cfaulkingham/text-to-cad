@@ -68,6 +68,23 @@ test("a batch stays under 32 MiB, and a body no batch can carry is left to its l
   assert.ok(server.reads.every(read => read.maxBytes <= 32 * MIB));
 });
 
+test("a transport's ceiling bounds every batch, a body over it is left to its lane, and a higher one is the server's bound", async () => {
+  for (const [ceiling, counts, alone] of [
+    // 8 MiB: two 3 MiB bodies to a batch from the first, and the 9 MiB one read alone.
+    [8 * MIB, [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1], "c3"],
+    // Above 32 MiB: the server's bound, as with none (8, 16 and then 32 MiB batches).
+    [64 * MIB, [2, 3, 10, 10, 10, 5], ""],
+  ]) {
+    const order = cids(40);
+    const rows = new Map(order.map(cid => [cid, rowFor(cid, cid === "c3" ? 9 * MIB : 3 * MIB)]));
+    const server = batchServer();
+    const batches = createTessellationBodyBatches({ order, rowOf: cid => rows.get(cid), readMany: server.readMany, maxBytes: ceiling });
+    for (const cid of order) assert.equal(await batches.take(cid, rows.get(cid)) === null, cid === alone);
+    assert.deepEqual(server.reads.map(read => read.count), counts);
+    assert.ok(server.reads.every(read => read.maxBytes <= Math.min(ceiling, 32 * MIB)));
+  }
+});
+
 test("a batch is charged before it is read and released with its last body; a refused charge reads nothing", async () => {
   const order = cids(30);
   const rows = new Map(order.map(cid => [cid, rowFor(cid)]));

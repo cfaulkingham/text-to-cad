@@ -52,8 +52,15 @@ export interface TessellationCacheProvider {
   getProbed(probe: TessellationProbe, options?: { signal?: AbortSignal; maxBytes?: number }): Promise<Uint8Array | null>;
   getManyProbed?(probes: TessellationProbe[], options?: { signal?: AbortSignal; maxBytes?: number }): Promise<(Uint8Array | null)[] | null>;
   put?(key: string, bytes: Uint8Array, options?: { signal?: AbortSignal }): Promise<unknown>;
+  /** The most framed bytes its transport carries in one batched read (`tessBatchMaxBytes`). */
+  readonly maxBatchBytes?: number;
 }
 export interface TessellationCache {
+  /**
+   * The most framed bytes one `getCachedEntryBytesMany` may ask for: the server's bound, or the
+   * lower ceiling its provider's transport declares (`tessBatchMaxBytes`).
+   */
+  readonly batchMaxBytes?: number;
   /** Borrow a cancellable view; admitted write-backs remain owned by the parent cache. */
   createSession(options?: { signal?: AbortSignal }): TessellationCache;
   tessellationCacheProviderRegistered(): boolean;

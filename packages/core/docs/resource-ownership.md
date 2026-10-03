@@ -176,7 +176,12 @@ verifies the v4 header and content address before adoption.
 A package's open reads its cache in groups, as a snapshot does: one probe for a
 chunk of components and one TESB read for a batch of their bodies, each
 growing from the loader's first publish (eight components) to the server's
-bounds (256 keys, 32 MiB), in load order (`packageBatchReads.js`). A batch's
+bounds (256 keys, 32 MiB), in load order (`packageBatchReads.js`). A client
+whose transport carries large replies slowly declares a lower ceiling for a
+batch's bytes (`createCadClient({ maxBatchBytes })`, which its cache reports
+as `batchMaxBytes`): the CAD app's tunnel declares 8 MiB. A ceiling never
+raises the server's bound (`tessBatchMaxBytes`), and a body larger than the
+ceiling is read alone, as every body once was. A batch's
 framed bytes are charged to the Viewer envelope before it is read and released
 once its last component has taken its body; each component's decode is still
 admitted on its own before it runs, and an entry the batch could not read or
@@ -207,6 +212,10 @@ writes. Viewer write-backs drain in batches with bounded concurrency: after a
 quiet interval, no later than two seconds after a batch's first entry however
 busy the load, and at once when a batch reaches its byte bound; an entry is
 turned away only while the writer is still busy with the full batch before it.
+So the queue holds at most two batches of encoded bodies: the one being
+written, at most 32 MiB (`TESS_BATCH_MAX_BYTES`, the default `maxPendingBytes`)
+plus the entry that reached the bound, and the one being collected meanwhile,
+at most 32 MiB: about 64 MiB plus one entry in all (`memoryStats()`).
 Snapshot jobs flush and dispose their own cache after their complete source is
 loaded. Decoded component meshes retain their existing page-wide
 content-addressed LRU; a cache view does not retain an additional geometry copy.

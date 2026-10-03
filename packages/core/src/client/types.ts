@@ -161,4 +161,11 @@ export interface CadClientOptions {
    * client then asks the preview route nothing. Returns the unsubscribe.
    */
   editingPreviewFeed?: (file: string, onUpdate: (preview: CadEditingPreview) => void, onError: (error: unknown) => void) => () => void;
+  /**
+   * The most bytes one batched read asks for over this client's `fetch`: a host whose channel
+   * carries large replies slowly declares a ceiling, and reads that batch (a package's warm
+   * tessellation bodies) stay within the lesser of it and the server's own bound
+   * (`TESS_BATCH_MAX_BYTES`). Unset, the server's bound alone applies.
+   */
+  maxBatchBytes?: number;
 }

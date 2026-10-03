@@ -870,6 +870,8 @@ export function createTessellationCache({ provider = null, writeBack = {} } = {}
 
   configureTessellationCacheWriteBack(writeBack);
   const cache = {
+    // What one batched read may ask for over this cache's provider (`tessBatchMaxBytes`).
+    batchMaxBytes: tessBatchMaxBytes(cacheProvider?.maxBatchBytes),
     tessellationCacheProviderRegistered,
     probeCachedTessellationEntries: (inputs, options, request) => probeCachedTessellationEntries(inputs, options, requestOptions(request)),
     getCachedEntryBytes: (input, options, request) => getCachedEntryBytes(input, options, requestOptions(request)),
@@ -895,6 +897,17 @@ export function createTessellationCache({ provider = null, writeBack = {} } = {}
 }
 export const TESS_PROBE_MAX_KEYS = 256;
 export const TESS_BATCH_MAX_BYTES = 32 * 1024 * 1024;
+
+/**
+ * The most framed bytes one batched read may ask for: the server's bound
+ * (`TESS_BATCH_MAX_BYTES`), or a transport's lower ceiling. A host whose channel
+ * carries large replies slowly declares one (`createCadClient({ maxBatchBytes })`);
+ * a ceiling above the server's bound, or none, leaves the server's.
+ */
+export function tessBatchMaxBytes(transportMaxBytes) {
+  const ceiling = Number(transportMaxBytes);
+  return Number.isSafeInteger(ceiling) && ceiling > 0 ? Math.min(ceiling, TESS_BATCH_MAX_BYTES) : TESS_BATCH_MAX_BYTES;
+}
 /** How long a deferred write-back waits after its batch's first entry, however busy the load. */
 export const TESS_WRITE_BACK_MAX_WAIT_MS = 2000;
 
@@ -952,10 +965,14 @@ export function createHttpTessellationCacheProvider({
   headers = {},
   fetch: fetchImpl = globalThis.fetch,
   signal: lifetimeSignal,
+  // The transport's ceiling for one batched read (`tessBatchMaxBytes`).
+  maxBatchBytes,
 } = {}) {
   const scopedSignal = (signal) => lifetimeSignal && signal
     ? AbortSignal.any([lifetimeSignal, signal]) : lifetimeSignal || signal;
+  const batchCeiling = tessBatchMaxBytes(maxBatchBytes);
   return {
+    maxBatchBytes: batchCeiling,
     async probeMany(keys, { signal } = {}) {
       signal = scopedSignal(signal);
       if (!Array.isArray(keys) || keys.length > TESS_PROBE_MAX_KEYS) return null;
@@ -1001,7 +1018,7 @@ export function createHttpTessellationCacheProvider({
       const limit = Number(maxBytes);
       const framedBytes = 12 + rows.reduce((sum, row) => sum + 4 + (row ? align4(row.byteLength) : 0), 0);
       if (rows.some((row) => !row) || !Number.isSafeInteger(limit)
-        || framedBytes > limit || framedBytes > TESS_BATCH_MAX_BYTES) return null;
+        || framedBytes > limit || framedBytes > batchCeiling) return null;
       try {
         const response = await fetchImpl(batchUrl, {
           method: "POST",

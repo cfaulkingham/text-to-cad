@@ -870,6 +870,8 @@ export function useCadAssets({
             return planned === undefined ? undefined : planned?.cacheProbe || null;
           },
           readMany: (rows, options) => tessellationCache.getCachedEntryBytesMany(rows, options),
+          // No batch asks for more than the client's transport carries in one reply.
+          maxBytes: tessellationCache?.batchMaxBytes,
           // A batch's bodies are charged before they are read, as a lane's own body is.
           reserve: bytes => viewerMemoryPolicy.reserve({
             category: "workerInFlight", bytes, label: "tessellation batch", kind: "replace", recordLimitation: false,
