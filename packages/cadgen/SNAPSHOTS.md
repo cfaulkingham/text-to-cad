@@ -171,7 +171,7 @@ with its `path` and these durations:
 | Field | Measured work |
 | --- | --- |
 | `updateModelMs` | Output sizing, model pose/effects, exploded placement, topology edges and line resolution |
-| `frameCameraMs` | Camera selection/fitting, including visible-vertex tight framing when enabled |
+| `frameCameraMs` | Camera selection/fitting, including visible-vertex tight framing when enabled, and the camera's depth range when there is no studio |
 | `prepareStudioMs` | Camera depth and photographic studio setup; absent without a studio |
 | `drawSubmitMs` | The renderer's synchronous draw call |
 | `encodeImageMs` | Image readback, optional view label and PNG/data-URL encoding |

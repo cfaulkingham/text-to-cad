@@ -1293,6 +1293,23 @@ test("buildModel keeps restBounds at the zero pose while bounds follow the param
   scene.dispose();
 });
 
+test("a package that declares its box rests in that box, which is what the viewer frames and grounds", () => {
+  // assembly.json's bbox is measured on the exact B-rep; the parts' boxes overstate it once a
+  // part is turned. The viewer's STEP scene frames it, sizes its ground from it and explodes
+  // from it, so a snapshot of the same model must take the same box.
+  const declaredBounds = { min: [0.25, 0, 0], max: [3, 0.5, 0] };
+  const declared = buildModel(THREE, { ...sampleMeshData(), declaredBounds }, { renderPartsIndividually: true });
+  const undeclared = buildModel(THREE, sampleMeshData(), { renderPartsIndividually: true });
+  try {
+    assert.deepEqual(declared.restBounds, declaredBounds);
+    assert.deepEqual(declared.bounds, { min: [0, 0, 0], max: [3, 1, 0] }, "what is placed is still the parts' box");
+    assert.deepEqual(undeclared.restBounds, { min: [0, 0, 0], max: [3, 1, 0] }, "without a box, rest is the parts at rest");
+  } finally {
+    declared.dispose();
+    undeclared.dispose();
+  }
+});
+
 // Two components, six occurrences alternating between them, each placed 10 mm apart.
 function twoComponentPackage(componentA, componentB, occurrenceIndexes) {
   const parts = occurrenceIndexes.map((index) => {

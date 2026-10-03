@@ -20,7 +20,6 @@ import {
 import {
   createCadWebGlRenderer
 } from "./webglRenderer.js";
-import { resolveViewSettings } from "./viewSettings.js";
 import { PHOTOGRAPHIC_STUDIO_STAGE_RADIUS_MULTIPLIER } from "./photographicStudioRig.js";
 import {
   BASE_VIEWER_THEME,
@@ -325,7 +324,8 @@ export function applyLighting(scene, themeSettings, {
 // `sizeBounds` sizes the grid and stage; `bounds` places the floor's height. They are the same box
 // unless a caller knows the model's REST placement: then the ground is sized from rest, as the
 // viewer sizes it, so a pose never rescales it, while the floor still drops under a pose that
-// reaches below the rest box.
+// reaches below the rest box. Returns `{ gridBounds }`: the drawn grid's plane and span (null
+// without a grid), which a caller fits its camera's depth range to, as the viewer does.
 export function addFloor(scene, bounds, themeSettings, sceneScale, settingsByScale, guideSettings = null, sizeBounds = null) {
   const floor = themeSettings.floor || {};
   const mode = floor.mode || THEME_FLOOR_MODES.STAGE;
@@ -341,7 +341,7 @@ export function addFloor(scene, bounds, themeSettings, sceneScale, settingsBySca
     : {};
   const axisEnabled = axisSettings.enabled === true;
   if (!floorEnabled && !gridEnabled && !axisEnabled) {
-    return;
+    return { gridBounds: null };
   }
   const settings = renderSceneScaleSettings(sceneScale, settingsByScale);
   const { radius } = centerAndRadiusFromBounds(sizeBounds || bounds, sceneScale, settingsByScale);
@@ -357,8 +357,14 @@ export function addFloor(scene, bounds, themeSettings, sceneScale, settingsBySca
   // are independent scene references and always stay at the world origin.
   const followModel = floorEnabled && floor.followModel !== false;
   const minZ = followModel ? Math.min(0, boundsMinZ) : 0;
+  let gridBounds = null;
   if (gridEnabled) {
-    const gridConfig = buildGridConfig(radius, sceneScale);
+    // The grid's density is the viewer's too (`updateGridHelper`): the Grid preset is twice as fine.
+    const gridConfig = buildGridConfig(radius, sceneScale, { grid: gridSettings });
+    gridBounds = {
+      min: [-gridConfig.size / 2, -gridConfig.size / 2, 0],
+      max: [gridConfig.size / 2, gridConfig.size / 2, 0]
+    };
     const grid = new THREE.GridHelper(
       gridConfig.size,
       gridConfig.divisions,
@@ -403,7 +409,7 @@ export function addFloor(scene, bounds, themeSettings, sceneScale, settingsBySca
     scene.add(axis);
   }
   if (!floorEnabled) {
-    return;
+    return { gridBounds };
   }
   const stageSize = getStageFloorSize(radius, sceneScale);
   const lightingScopeRadius = getProportionalLightingScopeRadius(radius, sceneScale);
@@ -423,6 +429,7 @@ export function addFloor(scene, bounds, themeSettings, sceneScale, settingsBySca
   if (shadow) {
     scene.add(shadow);
   }
+  return { gridBounds };
 }
 
 export function boundsCorners(bounds) {
@@ -733,24 +740,24 @@ export function outputSize(output, job) {
   };
 }
 
-export function snapshotUsesLogarithmicDepthBuffer(job = {}) {
-  return !resolveViewSettings(job.display ?? {}).lighting.enabled;
-}
-
 export function configurePngRenderer(width, height, job, {
   defaultRenderScale = 1,
   toneMappingExposure = 1
 } = {}) {
   const renderer = createCadWebGlRenderer(THREE, {
     preserveDrawingBuffer: true,
-    // Three's logarithmic depth shaders do not compare correctly with the
-    // standard shadow map depth. Render uses a model-fitted camera range and
-    // ordinary depth; CAD inspection retains its wide-range depth buffer.
-    logarithmicDepthBuffer: snapshotUsesLogarithmicDepthBuffer(job)
+    // Ordinary depth in every preset, as the viewer draws them (`viewerLogarithmicDepthBuffer`):
+    // each output fits its camera's depth range to what it frames (`fitCameraDepthToBounds`).
+    // A logarithmic buffer drops the studio's shadows, and the instanced CAD edges, which write
+    // no logarithmic depth, would lose every depth test against a perspective surface.
+    logarithmicDepthBuffer: false
   });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = Math.max(toFiniteNumber(toneMappingExposure, 1), 0.05);
+  // The Clip tool's planes are per material, which three honours only with local clipping on,
+  // as the viewer's renderer has it (useViewerRuntime).
+  renderer.localClippingEnabled = true;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.setPixelRatio(clamp(toFiniteNumber(job.output?.renderScale, defaultRenderScale), 1, 3));

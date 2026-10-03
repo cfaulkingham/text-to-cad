@@ -92,7 +92,9 @@ maximum regardless of Flip. The neutral boundary is therefore offset 1 normally,
 or offset 0 when flipped. Interactive viewers and snapshots share this policy;
 orbiting the camera never changes the clipped half. Clip coordinates use original
 model bounds in both snapshot and interactive paths; posing or exploding the
-model cannot silently change the plane represented by a slider/input value.
+model cannot silently change the plane represented by a slider/input value. A
+snapshot cuts and caps with the viewer's own sync (`syncRuntimeStepClipPlane`,
+its plane measured against `restBounds`) on a renderer with local clipping on.
 
 `resolveViewSceneSettings({display, camera, appearance, quality})` is the public
 Viewer/snapshot scene-policy boundary. Its `view` is the full grouped state;
@@ -260,8 +262,12 @@ clips foreground guides, or the far plane truncates their finite span. A
 perspective camera passes its `pivot` (the point it looks at): its near plane
 never comes nearer than 1/256 of the pivot's depth, so a closeup the fit cannot
 measure (the camera inside a part's own box, or a routine deforming what it
-measures) keeps its depth resolution instead of making close surfaces fight. Standalone
-CAD snapshots may still use logarithmic depth: they render one fixed configuration.
+measures) keeps its depth resolution instead of making close surfaces fight.
+Snapshots draw every preset the same way: ordinary depth, fitted to each output
+with the same inputs (its placed records, the studio floor's elevation, the
+drawn grid's span and the camera's target as pivot). A logarithmic buffer would
+also lose the instanced CAD edges, which write no logarithmic depth: under a
+perspective camera every edge failed its depth test against the surfaces.
 
 ### `common/source.js`
 
@@ -354,8 +360,12 @@ Three.js object graph and its mutable state.
 `bounds` follows the live pose — what lighting, the floor, shadows and clipping
 need. `restBounds` is the same model at its ZERO pose, before a parameter, mate
 or animation frame moved a record, and it is what a camera fit is grounded on so
-that posing a model never re-frames it. A family scene carries its own
-(`restBounds` in the scene contract): a robot's is every joint at its default.
+that posing a model never re-frames it. A package that declares its whole box
+(assembly.json's `bbox`, `declaredBounds` in its composition) rests in that box,
+as the scene contract has it: the viewer frames and grounds it, and a snapshot
+sizes its ground and radiates an exploded view from it. A family scene carries
+its own (`restBounds` in the scene contract): a robot's is every joint at its
+default.
 
 Common settings:
 
@@ -590,7 +600,10 @@ and deterministic renderer settings. Automatic perspective cameras fit the
 current visible vertices to `output.padding` when `output.tightFrame` is true;
 otherwise they fit the model bounds. An explicit camera position is never
 reframed. Video capture fits its precomputed sequence-union bounds once so the
-camera does not breathe between frames.
+camera does not breathe between frames. As in the viewer, a still's studio floor
+and its contact shadow stay sized and centred on the rest placement however the
+model is posed or exploded (`groundBounds`), and an exploded view radiates from
+that rest box.
 
 `captureModel(viewport, { job })` returns data only:
 

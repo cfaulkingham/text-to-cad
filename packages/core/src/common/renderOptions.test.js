@@ -6,6 +6,12 @@ import * as THREE from "three";
 import {
   normalizeThemeSettings
 } from "./themeSettings.js";
+import { resolveCadGridSettings } from "./cadInk.js";
+import { THEME_FLOOR_MODES } from "../lib/themeSettings.js";
+import { sceneRadiusForBounds } from "../lib/viewer/modelRuntime.js";
+import { VIEWER_SCENE_SCALE } from "../lib/viewer/sceneScale.js";
+import { updateGridHelper } from "../lib/viewer/stageGrid.js";
+import { BASE_VIEWER_THEME } from "../lib/viewer/stageTheme.js";
 import {
   addFloor,
   applyLighting,
@@ -22,8 +28,7 @@ import {
   inferRenderSceneScale,
   outputSize,
   rendererDataUrlWithOptionalLabel,
-  resolveRenderView,
-  snapshotUsesLogarithmicDepthBuffer
+  resolveRenderView
 } from "./renderOptions.js";
 
 const SCALE_SETTINGS = Object.freeze({
@@ -80,12 +85,27 @@ test("shared render options preserve explicit caller-owned values without defaul
   assert.equal(options.renderScale, 0);
 });
 
-test("render display snapshots use ordinary depth for studio shadows", () => {
-  assert.equal(snapshotUsesLogarithmicDepthBuffer({}), true);
-  assert.equal(snapshotUsesLogarithmicDepthBuffer({ display: { mode: "solid" } }), true);
-  assert.equal(snapshotUsesLogarithmicDepthBuffer({ display: { mode: "render" } }), false);
-  assert.equal(snapshotUsesLogarithmicDepthBuffer({ display: { mode: "solid", lighting: {} } }), false);
-  assert.equal(snapshotUsesLogarithmicDepthBuffer({ display: { mode: "render", lighting: { enabled: false } } }), true);
+test("a snapshot draws the viewer's grid for the same settings, its density included", () => {
+  // The Grid preset's grid is twice as fine as the quiet one (`density: 2`); a snapshot of it drew
+  // the quiet one's spacing.
+  const bounds = { min: [0, 0, 0], max: [10, 10, 10] };
+  for (const grid of [{ enabled: true, density: 2, color: "#94a3b8", opacity: 0.38 }, { enabled: true }]) {
+    const scene = new THREE.Scene();
+    const floor = addFloor(scene, bounds, normalizeThemeSettings({ floor: { mode: "none", enabled: false } }),
+      RENDER_SCENE_SCALE.CAD, SCALE_SETTINGS, { grid });
+    const drawn = scene.children.find((child) => child.type === "GridHelper");
+    // What the viewer draws: ShellViewport's grid over its rest box, through stageEffects.
+    const viewer = { THREE, scene: new THREE.Scene() };
+    updateGridHelper(viewer, BASE_VIEWER_THEME, sceneRadiusForBounds(THREE, bounds, VIEWER_SCENE_SCALE.CAD), 0,
+      VIEWER_SCENE_SCALE.CAD, THEME_FLOOR_MODES.NONE, { floorSettings: { grid: resolveCadGridSettings(grid) } });
+    for (const attribute of ["position", "color"]) {
+      assert.deepEqual(Array.from(drawn.geometry.getAttribute(attribute).array),
+        Array.from(viewer.gridHelper.geometry.getAttribute(attribute).array), `${attribute}, density ${grid.density ?? 1}`);
+    }
+    // And its span, which the snapshot fits its camera's depth range to, as the viewer does.
+    const half = viewer.gridConfig.size / 2;
+    assert.deepEqual(floor?.gridBounds, { min: [-half, -half, 0], max: [half, half, 0] });
+  }
 });
 
 test("view presets and azimuth/elevation camera parsing remain stable", () => {

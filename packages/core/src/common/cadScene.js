@@ -2562,9 +2562,12 @@ export function buildModel(THREE, source, settings = {}) {
     // The model's ZERO pose: the authored placement, before any parameter,
     // mate or animation moved a record. `bounds` follows the live pose, which
     // is what lighting, the floor and clipping need; this one does not move
-    // when a pose does, which is what a camera fit needs.
+    // when a pose does, which is what a camera fit needs. A package that
+    // declares its whole box (assembly.json's `bbox`) is that box, as the scene
+    // contract has it (`lib/viewer/sceneContract.js`): the viewer frames it and
+    // sizes the ground from it, so a snapshot must size and explode from it too.
     get restBounds() {
-      return runtime.baseBounds;
+      return meshData?.declaredBounds || runtime.baseBounds;
     },
     get radius() {
       return runtime.modelRadius;
