@@ -131,19 +131,24 @@ shadows, a 512px procedural environment and 2x snapshot capture. Technical
 PNG output retains requested dimensions by resampling the full drawing buffer.
 
 The two studios use one physical Render pipeline. A neutral HDR key card, a rear
-fill card and a side bounce card hang in a lit studio sweep and generate a
-procedural PMREM for authored PBR reflections; one aligned, model-scaled
-SpotLight supplies direct illumination and PCF contact shadows. Softbox size
-changes card area and bounded shadow softness while keeping total card flux
-stable. Fill sets both fill cards' radiance as a fraction of the key card's.
-Rotation moves the direct light and `scene.environmentRotation` together around
-CAD Z. An overhead side key reveals depth; the rear fill keeps horizontal
-reflections readable and the bounce, low on the key's far side, lifts the faces
-the key cannot reach (an iso view's right-hand side). The sweep
-(`PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE`: 0.42 overhead, 0.12 at the horizon and a
-light floor's 0.2 below, easing between them) is never a void: a face turned
-away from every card keeps a soft fill, and polished metal reflects a lit room
-with a horizon line rather than black. Environment radiance and direct illumination
+fill card, a side bounce card and the studio's fixed soft sources
+(`PHOTOGRAPHIC_STUDIO_PANELS`: a large overhead softbox and two tall strip boxes
+about 75 degrees either side of the default camera) hang in a studio sweep and
+generate a procedural PMREM for authored PBR reflections; one aligned,
+model-scaled SpotLight supplies direct illumination and PCF shadows. Softbox
+size changes every source's area and bounded shadow softness while keeping each
+source's total flux stable. Fill sets both fill cards' radiance as a fraction of
+the key card's. Rotation moves the direct light and `scene.environmentRotation`
+together around CAD Z. An overhead side key reveals depth; the rear fill keeps
+horizontal reflections readable and the bounce, low on the key's far side,
+lifts the faces the key cannot reach (an iso view's right-hand side). The
+softbox and strips are brightest along their centres and fall off toward their
+edges, and the sweep (`PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE`: 0.14 overhead, 0.07
+at the horizon and a light floor's 0.3 below, easing between them) is dimmer
+than they are, so polished and satin metal show defined gradients and highlight
+lines between darker gaps — what reads as metal rather than grey plastic — and
+dark glossy parts keep their color. Nothing is a void: a face turned away from
+every source keeps a soft fill. Environment radiance and direct illumination
 share a calibrated zero-EV lighting budget. Khronos PBR Neutral tone mapping is
 fixed; `toneMappingExposure` is `2 ** exposure`. Light and dark differ only in
 default backdrop color.

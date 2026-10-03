@@ -12,6 +12,7 @@ import {
   PHOTOGRAPHIC_STUDIO_BOUNCE_DIRECTION,
   PHOTOGRAPHIC_STUDIO_FILL_DIRECTION,
   PHOTOGRAPHIC_STUDIO_KEY_DIRECTION,
+  PHOTOGRAPHIC_STUDIO_PANELS,
   PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE
 } from "./photographicStudioRig.js";
 
@@ -94,7 +95,7 @@ test("zero fill removes both fill cards without changing the key", () => {
   });
 });
 
-test("the cards hang in a lit sweep, not a void: bright overhead, darkest at the horizon, a lit floor below", () => {
+test("the sources hang in a sweep, not a void: darkest at the horizon, dim overhead, a light floor below", () => {
   const scene = createStudioEnvironmentScene({});
   const room = scene.getObjectByName("studio-room");
   const position = room.geometry.getAttribute("position");
@@ -112,7 +113,7 @@ test("the cards hang in a lit sweep, not a void: bright overhead, darkest at the
   assert.ok(Math.abs(color.getX(bottom) - nadir) < 1e-6);
   assert.ok(Math.abs(color.getX(darkest) - horizon) < 1e-6);
   assert.ok(Math.abs(position.getZ(darkest)) < 1e-6, "the darkest band is the horizon");
-  assert.ok(horizon > 0 && horizon < nadir && nadir < zenith);
+  assert.ok(horizon > 0 && horizon < zenith && zenith < nadir);
   assert.equal(room.material.toneMapped, false);
   scene.traverse((object) => {
     object.geometry?.dispose?.();
@@ -120,18 +121,48 @@ test("the cards hang in a lit sweep, not a void: bright overhead, darkest at the
   });
 });
 
-test("softbox size preserves total card flux while changing highlight area", () => {
+test("the studio's soft sources are lit gradients: bright cores falling to their edges, strips standing upright", () => {
+  const scene = createStudioEnvironmentScene({ lighting: { size: 1, fill: 0.25 } });
+  for (const panel of PHOTOGRAPHIC_STUDIO_PANELS) {
+    const mesh = scene.getObjectByName(panel.name);
+    assert.ok(mesh, panel.name);
+    assert.ok(mesh.position.clone().normalize().distanceTo(
+      new mesh.position.constructor(...panel.direction).normalize()
+    ) < 1e-12);
+    const position = mesh.geometry.getAttribute("position");
+    const color = mesh.geometry.getAttribute("color");
+    let core = 0, corner = 0;
+    for (let index = 0; index < position.count; index += 1) {
+      const r = Math.hypot(position.getX(index) / panel.width, position.getY(index) / panel.height);
+      if (r < Math.hypot(position.getX(core) / panel.width, position.getY(core) / panel.height)) core = index;
+      if (r > Math.hypot(position.getX(corner) / panel.width, position.getY(corner) / panel.height)) corner = index;
+    }
+    assert.equal(color.getX(core), 1, "full radiance at the core");
+    assert.ok(color.getX(corner) < 0.5, "falls well off toward the edges");
+    assert.equal(mesh.material.color.r, panel.radiance);
+    if (panel.up) {
+      // The strip's height runs along its `up`.
+      const along = new mesh.position.constructor(0, 1, 0).applyQuaternion(mesh.quaternion);
+      assert.ok(along.distanceTo(new mesh.position.constructor(...panel.up).normalize()) < 0.1);
+    }
+  }
+  scene.traverse((object) => {
+    object.geometry?.dispose?.();
+    object.material?.dispose?.();
+  });
+});
+
+test("softbox size preserves every source's total flux while changing highlight area", () => {
   const small = createStudioEnvironmentScene({ lighting: { size: 0.5, fill: 0.25 } });
   const large = createStudioEnvironmentScene({ lighting: { size: 2, fill: 0.25 } });
-  const smallKey = small.getObjectByName("studio-key-card");
-  const largeKey = large.getObjectByName("studio-key-card");
-  const smallFlux = smallKey.material.color.r
-    * smallKey.geometry.parameters.width
-    * smallKey.geometry.parameters.height;
-  const largeFlux = largeKey.material.color.r
-    * largeKey.geometry.parameters.width
-    * largeKey.geometry.parameters.height;
-  assert.ok(Math.abs(smallFlux - largeFlux) < 1e-10);
+  const flux = (scene, name) => {
+    const mesh = scene.getObjectByName(name);
+    return mesh.material.color.r * mesh.geometry.parameters.width * mesh.geometry.parameters.height;
+  };
+  for (const name of ["studio-key-card", "studio-fill-card", "studio-bounce-card", ...PHOTOGRAPHIC_STUDIO_PANELS.map((panel) => panel.name)]) {
+    assert.ok(Math.abs(flux(small, name) - flux(large, name)) < 1e-9, name);
+    assert.equal(large.getObjectByName(name).geometry.parameters.width, small.getObjectByName(name).geometry.parameters.width * 4);
+  }
   for (const scene of [small, large]) {
     scene.traverse((object) => {
       object.geometry?.dispose?.();

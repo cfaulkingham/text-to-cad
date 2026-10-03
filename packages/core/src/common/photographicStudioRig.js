@@ -14,13 +14,35 @@ export const PHOTOGRAPHIC_STUDIO_BOUNCE_DIRECTION = Object.freeze([0.95, 0.33, 0
 
 // Calibrated together at 0 EV. PMREM also supplies diffuse illumination, so
 // its key card and the shadow-casting spotlight share the illumination budget.
-export const PHOTOGRAPHIC_STUDIO_KEY_ILLUMINANCE = 2.1;
+export const PHOTOGRAPHIC_STUDIO_KEY_ILLUMINANCE = 2.4;
 export const PHOTOGRAPHIC_STUDIO_CARD_RADIANCE = 8;
-// The sweep the cards hang in, never a void: a bright ceiling, the darkest band
-// at the horizon and a light floor's bounce below. A black enclosure crushed
-// every face turned away from the cards, and every polished metal surface that
-// reflected it, to black.
-export const PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE = Object.freeze({ zenith: 0.42, horizon: 0.12, nadir: 0.2 });
+// The sweep the cards hang in: dim walls and ceiling, the darkest band at the
+// horizon and a light floor below. Most of the studio's light comes from its
+// sources rather than the room, so metal shows a lit softbox against a darker
+// surround, but nothing is a void: a black enclosure crushed every face turned
+// away from the cards, and every polished surface that reflected it, to black.
+export const PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE = Object.freeze({ zenith: 0.14, horizon: 0.07, nadir: 0.3 });
+// The studio's fixed soft sources, beside the key and the two fill cards: a large
+// overhead softbox and two tall strip boxes about 75 degrees either side of the
+// default camera. Their bright cores fall off toward the edges (`falloff`: across
+// the width, then along the height), so polished and satin metal show defined
+// gradients and highlight lines between darker gaps, which is what reads as metal.
+// Sizes are at Size 1 and grow with the softbox Size at constant flux, like the
+// cards. A strip's `up` stands it upright.
+export const PHOTOGRAPHIC_STUDIO_PANELS = Object.freeze([
+  Object.freeze({
+    name: "studio-top-softbox", direction: Object.freeze([0, 0, 1]),
+    width: 7, height: 5, radiance: 2.2, falloff: Object.freeze([0.6, 0.6])
+  }),
+  Object.freeze({
+    name: "studio-strip-left", direction: Object.freeze([-0.5, -0.87, 0.05]), up: Object.freeze([0, 0, 1]),
+    width: 1.2, height: 9, radiance: 3, falloff: Object.freeze([0.7, 0.4])
+  }),
+  Object.freeze({
+    name: "studio-strip-right", direction: Object.freeze([0.87, 0.5, 0.05]), up: Object.freeze([0, 0, 1]),
+    width: 1.2, height: 9, radiance: 3, falloff: Object.freeze([0.7, 0.4])
+  })
+]);
 // The opaque stage is mostly backdrop-colored fill, with a smaller diffuse
 // response for subtle contact shadows. This also softens the spotlight pool
 // against the surrounding floor. Both weights are material-local: the model

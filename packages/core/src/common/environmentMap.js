@@ -7,6 +7,7 @@ import {
   PHOTOGRAPHIC_STUDIO_CARD_RADIANCE,
   PHOTOGRAPHIC_STUDIO_FILL_DIRECTION,
   PHOTOGRAPHIC_STUDIO_KEY_DIRECTION,
+  PHOTOGRAPHIC_STUDIO_PANELS,
   PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE
 } from "./photographicStudioRig.js";
 
@@ -39,17 +40,36 @@ function card(scene, {
   direction,
   width,
   height,
-  intensity
+  intensity,
+  up = null,
+  falloff = null
 }) {
   if (!(intensity > 0)) return null;
+  // A soft source with `falloff` is brightest along its centre and falls toward
+  // its edges, so polished metal shows a gradient across it, not a flat rectangle.
+  const [across, along] = falloff || [0, 0];
+  const segments = falloff ? 12 : 1;
+  const geometry = new THREE.PlaneGeometry(width, height, segments, segments);
   const material = new THREE.MeshBasicMaterial({
     color: new THREE.Color(intensity, intensity, intensity),
     side: THREE.DoubleSide,
+    vertexColors: Boolean(falloff),
     toneMapped: false
   });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+  if (falloff) {
+    const positions = geometry.getAttribute("position");
+    const colors = new Float32Array(positions.count * 3);
+    for (let index = 0; index < positions.count; index += 1) {
+      const u = (2 * positions.getX(index)) / width;
+      const v = (2 * positions.getY(index)) / height;
+      colors.fill((1 - across * u * u) * (1 - along * v * v), index * 3, index * 3 + 3);
+    }
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  }
+  const mesh = new THREE.Mesh(geometry, material);
   mesh.name = name;
   mesh.position.copy(direction).normalize().multiplyScalar(6);
+  if (up) mesh.up.set(...up);
   mesh.lookAt(0, 0, 0);
   mesh.updateMatrixWorld(true);
   scene.add(mesh);
@@ -59,10 +79,10 @@ function card(scene, {
 const ROOM_RADIUS = 15;
 
 /**
- * The enclosure the cards hang in: a seamless studio sweep, one radiance per
+ * The enclosure the sources hang in: a seamless studio sweep, one radiance per
  * elevation. It eases from the darkest band at the horizon up to the ceiling
- * and down to the floor, so polished metal reflects a lit room with a horizon
- * line, and faces turned away from every card still receive a soft fill.
+ * and down to the floor, so polished metal reflects a room with a horizon line,
+ * and faces turned away from every source still receive a soft fill.
  */
 function addStudioSweep(scene) {
   const { zenith, horizon, nadir } = PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE;
@@ -91,16 +111,17 @@ function addStudioSweep(scene) {
 
 /**
  * Build the normalized HDR source scene used by PMREM: a bright neutral key
- * card, a rear fill card and a side bounce inside a lit studio sweep. Their
- * directions match the photographic direct-light rig;
- * scene.environmentRotation rotates them together at runtime without
- * rebuilding this resource.
+ * card, a rear fill card, a side bounce and the studio's fixed soft sources (an
+ * overhead softbox and two strip boxes) inside a studio sweep. Their directions
+ * match the photographic direct-light rig; scene.environmentRotation rotates them
+ * together at runtime without rebuilding this resource.
  */
 export function createStudioEnvironmentScene(configuration = {}) {
   const lighting = lightingConfiguration(configuration);
-  // Emissive radiance is inversely proportional to card area, so changing the
+  // Emissive radiance is inversely proportional to source area, so changing the
   // apparent softbox size changes highlight width without changing total flux.
-  const cardRadiance = PHOTOGRAPHIC_STUDIO_CARD_RADIANCE / (lighting.size * lighting.size);
+  const area = lighting.size * lighting.size;
+  const cardRadiance = PHOTOGRAPHIC_STUDIO_CARD_RADIANCE / area;
   const scene = new THREE.Scene();
   scene.name = "cadgen-photographic-environment";
   scene.background = new THREE.Color().setScalar(PHOTOGRAPHIC_STUDIO_ROOM_RADIANCE.horizon);
@@ -129,6 +150,17 @@ export function createStudioEnvironmentScene(configuration = {}) {
     height: 5 * lighting.size,
     intensity: cardRadiance * lighting.fill
   });
+  for (const panel of PHOTOGRAPHIC_STUDIO_PANELS) {
+    card(scene, {
+      name: panel.name,
+      direction: new THREE.Vector3(...panel.direction),
+      width: panel.width * lighting.size,
+      height: panel.height * lighting.size,
+      intensity: panel.radiance / area,
+      up: panel.up || null,
+      falloff: panel.falloff || null
+    });
+  }
   return scene;
 }
 
