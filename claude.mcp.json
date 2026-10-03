@@ -8,8 +8,7 @@
         "cadgen==0.7.9",
         "cadgen",
         "mcp"
-      ],
-      "startup_timeout_sec": 300
+      ]
     }
   }
 }
