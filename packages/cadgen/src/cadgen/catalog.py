@@ -287,8 +287,18 @@ def _remember_artifact_hash(key: str, version: tuple[int, ...], digest: str) -> 
 
 
 def _file_version(stat: os.stat_result) -> tuple[int, ...]:
-    """What the memo keys a file's version by (beside its path)."""
+    """What the memo keys a file's version by (beside its path). Always of the path's stat, as
+    the lookup takes it, never of a read handle's (``_held_version``)."""
     return stat.st_mtime_ns, stat.st_size, stat.st_ino, stat.st_ctime_ns
+
+
+def _held_version(stat: os.stat_result) -> tuple[int, ...]:
+    """What a read handle's stat (``os.fstat``) and its path's report alike of a file version:
+    the file, its size, its mtime. Not its ctime: on Windows (Python 3.12+) a path's is the
+    file's creation, kept there for compatibility, and a handle's its last change. They differ
+    for any file changed a clock tick after it was made, which a save by rename over an earlier
+    file always is: it takes on that file's creation time."""
+    return stat.st_ino, stat.st_size, stat.st_mtime_ns
 
 
 def _remembered_artifact_hash(key: str, stat: os.stat_result) -> str | None:
@@ -298,19 +308,21 @@ def _remembered_artifact_hash(key: str, stat: os.stat_result) -> str | None:
 
 
 def _read_artifact_hash(resolved: Path, key: str) -> str | None:
-    """Hash the file's bytes. The digest is remembered under the version the read handle
-    held, and only while the path still names that version once the read is done: a file
-    replaced or rewritten during the read is read again by the next asker."""
+    """Hash the file's bytes. The digest is remembered under the version the path names once
+    the read handle is open, and only when the handle holds that version and the path still
+    names it once the read is done: a file replaced or rewritten during the read is read again
+    by the next asker."""
     import hashlib
 
     digest = hashlib.sha256()
     try:
         with open_shared_for_read(resolved) as handle:
-            read = os.fstat(handle.fileno())
+            held = os.fstat(handle.fileno())
+            named = resolved.stat()
             # Each chunk is two waits for the GIL (after the read, after the update), and beside
             # a thread running Python each wait is a switch interval: 1 MiB chunks hashed a
             # 227 MB STEP in 2.8 s beside one busy thread (0.11 s alone), 16 MiB ones in 0.31 s.
-            buffer = bytearray(min(_ARTIFACT_HASH_CHUNK_BYTES, max(read.st_size, 1 << 16)))
+            buffer = bytearray(min(_ARTIFACT_HASH_CHUNK_BYTES, max(held.st_size, 1 << 16)))
             view = memoryview(buffer)
             while count := handle.readinto(buffer):
                 digest.update(view[:count])
@@ -318,8 +330,9 @@ def _read_artifact_hash(resolved: Path, key: str) -> str | None:
     except OSError:
         return None
     hexdigest = digest.hexdigest()
-    if _file_version(after) == _file_version(read):
-        _remember_artifact_hash(key, _file_version(read), hexdigest)
+    version = _file_version(named)
+    if _file_version(after) == version and _held_version(held) == _held_version(named):
+        _remember_artifact_hash(key, version, hexdigest)
     return hexdigest
 
 

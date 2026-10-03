@@ -8,6 +8,7 @@ import threading
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from cadgen import catalog
@@ -39,6 +40,20 @@ def _watch_flight(flights: dict, lock, match, waiting: threading.Event) -> None:
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class _WindowsFstat:
+    """``os`` as ``catalog`` sees it on Windows: since Python 3.12 a read handle's ``st_ctime``
+    is the file's last change, where its path's is its creation. Here they are a clock tick apart."""
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    @staticmethod
+    def fstat(fd):
+        stat = os.fstat(fd)
+        fields = {name: getattr(stat, name) for name in dir(stat) if name.startswith("st_")}
+        return SimpleNamespace(**{**fields, "st_ctime_ns": stat.st_ctime_ns + 15_625_000})
 
 
 class CatalogWarmTests(unittest.TestCase):
@@ -276,6 +291,16 @@ class CatalogWarmTests(unittest.TestCase):
         os.utime(self.part, ns=(old.st_atime_ns, old.st_mtime_ns))
         self.assertEqual((self.part.stat().st_size, self.part.stat().st_mtime_ns), (old.st_size, old.st_mtime_ns))
         self.assertEqual(catalog.artifact_file_hash(self.part), _sha(self.part))
+
+    def test_a_digest_is_remembered_where_a_handle_reports_another_ctime_than_its_path(self):
+        # On Windows the two ctimes differ for every save by rename over an earlier file, and for
+        # setUp's file when its write lands a clock tick after its creation: the memo compared them
+        # and never remembered such a file, so the warmed save's catalog read read it again
+        # (Windows CI, 2026-10-03).
+        with mock.patch.object(catalog, "os", _WindowsFstat()):
+            self.assertEqual(catalog.artifact_file_hash(self.part), _sha(self.part))
+            with mock.patch.object(catalog, "open_shared_for_read", side_effect=AssertionError("read the file again")):
+                self.assertEqual(catalog.artifact_file_hash(self.part), _sha(self.part))
 
     def test_an_unbuilt_file_is_read_once_for_its_row(self):
         reads = []
