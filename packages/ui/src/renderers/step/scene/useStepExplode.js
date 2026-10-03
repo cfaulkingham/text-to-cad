@@ -30,7 +30,19 @@ export function displayRecordExplodedViewTranslation(THREE, record) {
   );
 }
 
-function applyExplodedViewRuntimeProgress(runtime, layout, progress) {
+/**
+ * The stage follows the parts to where they are drawn, as it follows a pose (`useStepPose`):
+ * the lights, the key's shadow and the depth range are fitted to the box the explosion fills
+ * (`syncSceneBounds`), while the floor keeps its rest footprint. The pose pass refits it too,
+ * but it runs before this layer in a commit, so on its own the stage stayed fitted to the
+ * model as it was before the explosion moved it.
+ */
+function followExplodedStage(runtime, syncSceneBounds) {
+  runtime?.cadScene?.refreshBounds?.();
+  syncSceneBounds?.();
+}
+
+function applyExplodedViewRuntimeProgress(runtime, layout, progress, syncSceneBounds = null) {
   if (!runtime?.THREE || !Array.isArray(runtime.displayRecords)) {
     return;
   }
@@ -43,6 +55,7 @@ function applyExplodedViewRuntimeProgress(runtime, layout, progress) {
   if (runtime.topologyDisplayEdgeTransformByRecord === true) {
     syncRecordTopologyDisplayEdgeTransforms(runtime, runtime.displayRecords);
   }
+  followExplodedStage(runtime, syncSceneBounds);
   runtime.requestRender?.();
 }
 
@@ -59,6 +72,7 @@ function applyExplodedViewRuntimeProgress(runtime, layout, progress) {
 export function useStepExplode(layers) {
   const { viewport, props, policy, displayRecordsToken, setExplodedViewPoseTick, explosionRef: explodedViewAnimationRef } = layers;
   const { runtimeRef, viewerReadyTick } = viewport;
+  const syncSceneBounds = viewport.syncSceneBounds;
   const { meshData, modelKey, isLoading } = props;
   const { explodedViewActive, explodeAmount, normalizedExplodedSettings, focusedPartIds, normalizedThemeSettings } = policy;
   const meshGeometrySource = meshData?.geometrySource && typeof meshData.geometrySource === "object"
@@ -107,6 +121,7 @@ export function useStepExplode(layers) {
         applyDisplayRecordTransform(THREE, record);
       }
       syncRecordTopologyDisplayEdgeTransforms(runtime, runtime.displayRecords);
+      followExplodedStage(runtime, syncSceneBounds);
       setExplodedViewPoseTick((tick) => tick + 1);
       runtime.requestRender?.();
       animation.progress = 0;
@@ -126,6 +141,7 @@ export function useStepExplode(layers) {
         applyDisplayRecordTransform(THREE, record);
       }
       syncRecordTopologyDisplayEdgeTransforms(runtime, runtime.displayRecords);
+      followExplodedStage(runtime, syncSceneBounds);
       setExplodedViewPoseTick((tick) => tick + 1);
       runtime.requestRender?.();
       animation.progress = 0;
@@ -140,7 +156,7 @@ export function useStepExplode(layers) {
 
     if (!shouldAnimate) {
       animation.progress = targetProgress;
-      applyExplodedViewRuntimeProgress(runtime, layout, targetProgress);
+      applyExplodedViewRuntimeProgress(runtime, layout, targetProgress, syncSceneBounds);
       setExplodedViewPoseTick((tick) => tick + 1);
       return undefined;
     }
@@ -152,7 +168,7 @@ export function useStepExplode(layers) {
     const startedAt = typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
       : Date.now();
-    applyExplodedViewRuntimeProgress(runtime, layout, startProgress);
+    applyExplodedViewRuntimeProgress(runtime, layout, startProgress, syncSceneBounds);
 
     const step = (timestamp) => {
       const now = Number.isFinite(Number(timestamp)) ? Number(timestamp) : Date.now();
@@ -160,7 +176,7 @@ export function useStepExplode(layers) {
       const eased = easeExplodedViewProgress(linearProgress);
       const progress = startProgress + (targetProgress - startProgress) * eased;
       animation.progress = progress;
-      applyExplodedViewRuntimeProgress(runtime, layout, progress);
+      applyExplodedViewRuntimeProgress(runtime, layout, progress, syncSceneBounds);
       if (linearProgress < 1) {
         animation.rafId = window.requestAnimationFrame(step);
       } else {
