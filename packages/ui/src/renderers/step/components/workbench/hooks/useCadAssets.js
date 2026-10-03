@@ -212,6 +212,19 @@ function completedPackageMeshState(entry, meshData) {
   };
 }
 
+// A detail swap (`applyComponentLodBatch`) changes the geometry on screen, never what the load said
+// of the model: a package still arriving stays short of interaction, and one whose load failed keeps
+// its error. Composed as a complete package instead, a swap that landed after a failed load took the
+// alert away, and the partial model read "Updating model…" for good (the w16, at 120 of 777 parts).
+function detailSwapMeshState(current, entry, meshData) {
+  return {
+    ...completedPackageMeshState(entry, meshData),
+    assemblyInteractionReady: current.assemblyInteractionReady !== false,
+    assemblyBackgroundError: current.assemblyBackgroundError || "",
+    assemblyBackgroundErrorMeshHash: current.assemblyBackgroundErrorMeshHash || "",
+  };
+}
+
 export function useCadAssets({
   initialEntry = null,
   client,
@@ -513,7 +526,6 @@ export function useCadAssets({
       baseReferenceState, baseReferenceComposition,
       referenceComposition: references?.composition || baseReferenceComposition };
     if (ctx.lodPending || lodSceneAdoptionRef.current.snapshot().pending) return false;
-    const nextState = completedPackageMeshState(ctx.entry, composed);
     publishMeshCostAccounting({ meshData: composed, componentMeshDataByCid: maps.componentMeshDataByCid,
       loaded: Object.keys(maps.componentMeshDataByCid).length, total: Object.keys(ctx.descriptor.components || {}).length,
       publishCount: ctx.publishCount, meshRevision: ctx.meshHash, final: ctx.complete });
@@ -552,14 +564,15 @@ export function useCadAssets({
         abortLoad(referenceAbortControllerRef);
         referenceCompositionRef.current = pending.baseReferenceComposition;
         displayedReferenceCompositionRef.current = pending.baseReferenceComposition;
-        const restoredState = completedPackageMeshState(ctx.entry, pending.baseSource);
-        recoveryCommand.source = pending.baseSource;
+        const baseSource = pending.baseSource;
+        recoveryCommand.source = baseSource;
         recoveryCommand.reference = pending.baseReferenceState;
         setMeshEnvelope(previous => updateLodMeshState(previous, current => (
-          lodPackageRef.current === ctx && current?.file === ctx.file ? restoredState : current
+          lodPackageRef.current === ctx && current?.file === ctx.file
+            ? detailSwapMeshState(current, ctx.entry, baseSource) : current
         ), recoveryCommand));
         setError("Detail update failed; restoring the previous view.");
-        return pending.baseSource;
+        return baseSource;
       },
       failed: () => {
         if (lodPackageRef.current === ctx) setError("Detail update and restoration failed. Reload the model to continue.");
@@ -580,7 +593,8 @@ export function useCadAssets({
     });
     tracker.published(composed);
     setMeshEnvelope(previous => updateLodMeshState(previous, current => (
-      !current || current.file !== ctx.file || lodPackageRef.current !== ctx || signal?.aborted ? current : nextState
+      !current || current.file !== ctx.file || lodPackageRef.current !== ctx || signal?.aborted ? current
+        : detailSwapMeshState(current, ctx.entry, composed)
     ), command));
     const outcome = await completed;
     if (outcome.status === "disposed-failed") return { status: "scene-failed" };

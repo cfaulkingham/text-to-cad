@@ -227,7 +227,10 @@ replacement stages or fails. Reuse requires the same runtime surface input,
 concrete surface object and tessellation; placements and appearance come from
 the new tree. Selection, measurements and reference copying wait for matching
 new geometry. A failed replacement preserves the view and reports its error;
-only that file/hash stops retrying automatically. STEP pose and animation
+only that file/hash stops retrying automatically. A first load that fails part
+way keeps the parts it drew under its error, and refinement goes on over them: a
+detail swap changes geometry only, never whether the load finished or failed
+(`detailSwapMeshState`). STEP pose and animation
 metadata use their normal loading path, without a promise to retain the
 previous pose. Snapshot source isolation is unchanged.
 

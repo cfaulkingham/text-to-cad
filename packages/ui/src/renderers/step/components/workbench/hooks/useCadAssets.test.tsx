@@ -1,13 +1,14 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { createHttpCadResourceProvider } from '@text-to-cad/core/client';
+import { createHttpCadResourceProvider, SurfaceResolutionError } from '@text-to-cad/core/client';
 import { entryHasMesh, entryHasReferences } from '@text-to-cad/core/lib/entryAssets.js';
 import { renderAssetCacheStats } from '@text-to-cad/core/lib/renderAssetClient.js';
 import { createTessellationCache, encodeComponentTessellation, tessellationPayloadFacts,
   tessellationCacheKey, validateTessellationProbeRow } from '@text-to-cad/core/lib/surf/tessellationCache.js';
 import { lodTessellationForLevel } from '@text-to-cad/core/lib/surf/lodPolicy.js';
 import { completedPackages } from '../../../render/completedPackageCache.js';
+import { lodPayloadRequest } from '../../../render/lodPayloadRequest.js';
 import { viewerMemoryPolicy } from '../../../render/viewerMemoryPolicy.js';
 import { useCadAssets } from './useCadAssets.js';
 
@@ -138,6 +139,38 @@ it('opens a warm 317-component STEP with a probe per chunk and its bodies in bat
     expect(many.mock.calls.map(([rows]) => rows.length)).toEqual([8, 16, 32, 64, 128, 69]);
     expect(single).not.toHaveBeenCalled();
     expect(viewerMemoryPolicy.snapshot().inFlightBytes).toBe(0);
+    opened.unmount();
+  } finally { owner.dispose(); }
+});
+
+// A load that fails part way leaves its model partly on screen with the failure attached, and the
+// viewport's detail scheduler goes on refining what is there. A swap it publishes then must not
+// stand the model up as complete: that took the alert away and left "Updating model…" for good.
+it('keeps a failed load\'s error, and its model partial, through a detail swap', async () => {
+  const { client, model, encoded } = warmLargeStep();
+  // One component past the first publishes is cold, and its surface cannot be derived.
+  const cold = createHash('sha256').update('317-component-c200').digest('hex');
+  const probe = vi.fn(async keys => keys.map(key => (key.startsWith(cold) ? null : encoded.get(key)?.row || null)));
+  const many = vi.fn(async rows => rows.map(row => encoded.get(row.tessellationInput)?.bytes.slice() || null));
+  const owner = createTessellationCache({ provider: { probeMany: probe, getProbed: vi.fn(), getManyProbed: many } });
+  const failing = { ...client, resolveSurfaceComponents: vi.fn(async () => {
+    throw new SurfaceResolutionError('artifact request failed: cadgen-daemon: could not start a worker');
+  }) };
+  try {
+    const opened = renderHook(() => assets(model, failing, owner.createSession()));
+    await act(() => opened.result.current.loadMeshForEntry(model));
+    const failed = opened.result.current.meshState;
+    expect(failed.assemblyBackgroundError).toContain('could not start a worker');
+    expect(failed.assemblyInteractionReady).toBe(false);
+    expect(failed.meshData.missingComponentIds.length).toBeGreaterThan(0);
+    const component = opened.result.current.lodPackage.components[0];
+    const payload = { meshData: component.meshData, lodRequest: lodPayloadRequest(component, 0) };
+    act(() => { void opened.result.current.applyComponentLodBatch([{ cid: component.cid, level: 0, payload }]); });
+    const swapped = opened.result.current.meshState;
+    expect(swapped.meshData).not.toBe(failed.meshData);
+    expect(swapped.assemblyBackgroundError).toBe(failed.assemblyBackgroundError);
+    expect(swapped.assemblyBackgroundErrorMeshHash).toBe(failed.assemblyBackgroundErrorMeshHash);
+    expect(swapped.assemblyInteractionReady).toBe(false);
     opened.unmount();
   } finally { owner.dispose(); }
 });
