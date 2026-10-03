@@ -150,10 +150,7 @@ The catalog also carries `revision`, a digest of its entries that moves whenever
 anything a client would see in them does. A host that cannot afford to read the
 whole catalog on a timer (the CAD app relays every request through its host's
 few shared slots) compares the revision it is told with the client's
-`catalogRevision`, and reads the catalog again only when they differ. The route
-also sends the revision as a strong `ETag`: a request that sends it back in
-`If-None-Match` is answered `304` with no body, which is how the web host's poll
-learns that nothing changed without reading the catalog again.
+`catalogRevision`, and reads the catalog again only when they differ.
 
 `/__cad/asset` applies root containment, hidden-path rules and the served-asset
 extension filter. Model scripts are excluded. It and `/__cad/store` serve a
@@ -208,7 +205,7 @@ cache reads and writes.
 | Route | Purpose |
 |---|---|
 | `GET /__cad/server` | Server identity, root and capabilities. |
-| `GET /__cad/catalog` | Current catalog, root identity and `revision` (also its `ETag`; a matching `If-None-Match` gets `304`). |
+| `GET /__cad/catalog` | Current catalog, root identity and `revision`. |
 | `GET /__cad/asset?file=...` | Allowed artifact bytes inside the served root. |
 | `GET /__cad/store?file=...` | Virtual render assets from the shared store. |
 | `GET /__cad/drawing?file=...` | A `.dxf` flattened to 2D render primitives; the DXF pane's only source. |

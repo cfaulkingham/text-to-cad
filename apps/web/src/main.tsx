@@ -47,8 +47,8 @@ function StartingView({ error }: { error?: Error }) {
 const element = document.getElementById('root');
 if (!element) throw new Error('Missing #root mount point.');
 const root = createRoot(element);
-// The catalog is read every two seconds while the tab is seen, and only whether it changed: a hidden
-// tab asks nothing and is read again the moment it is shown (`host/cadClient.js`).
+// The catalog is read every two seconds while the tab is seen: a hidden tab asks nothing and is read
+// again the moment it is shown (`host/cadClient.js`).
 const client = createWebCadClient();
 let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
 if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.append(icon); }

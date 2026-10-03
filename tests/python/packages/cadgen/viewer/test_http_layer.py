@@ -167,36 +167,6 @@ class BindAsksNoReverseDns(unittest.TestCase):
         server.server_close()
 
 
-class CatalogConditionalRequests(unittest.TestCase):
-    """The catalog's revision is its entity tag: a client holding it is answered 304."""
-
-    def setUp(self):
-        self.fixture = ServerFixture()
-        self.addCleanup(self.fixture.close)
-        Path(self.fixture.root, "a.stl").write_bytes(b"solid a\nendsolid a\n")
-        hydration = mock.patch.object(self.fixture.app.backend, "_start_catalog_hydration")
-        hydration.start()
-        self.addCleanup(hydration.stop)
-
-    def get(self, held=None, method="GET"):
-        return self.fixture.request(method, "/__cad/catalog", headers={"If-None-Match": held} if held else {})
-
-    def test_a_client_holding_the_revision_is_answered_304(self):
-        status, headers, body = self.get()
-        tag = headers["etag"]
-        self.assertEqual((status, tag), (200, f'"{json.loads(body)["revision"]}"'))
-        for held, method in ((tag, "GET"), (f"W/{tag}", "GET"), (f'"stale", {tag}', "GET"), ("*", "GET"), (tag, "HEAD")):
-            with self.subTest(held=held, method=method):
-                status, headers, body = self.get(held, method)
-                self.assertEqual((status, body, headers["etag"], headers["cache-control"]), (304, b"", tag, "no-store"))
-        status, headers, body = self.get('"stale"')
-        self.assertEqual((status, headers["etag"], json.loads(body)["revision"]), (200, tag, tag.strip('"')))
-        Path(self.fixture.root, "b.stl").write_bytes(b"solid b\nendsolid b\n")
-        status, headers, body = self.get(tag)
-        self.assertEqual((status, headers["etag"]), (200, f'"{json.loads(body)["revision"]}"'))
-        self.assertNotEqual(headers["etag"], tag)
-
-
 class SelectedFirstCatalog(unittest.TestCase):
     def setUp(self):
         self.fixture = ServerFixture()

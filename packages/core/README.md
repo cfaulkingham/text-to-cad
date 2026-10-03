@@ -190,9 +190,7 @@ Where the mechanism is written:
 Use `@text-to-cad/core/client`, `/common/*`, `/lib/*` and `/glb/*` exports.
 Construct `createCadClient({ origin, workspaceId })` in a host. Construction is
 inert; subscriptions start catalog polling, which the host's `shouldPoll` gates
-(the web's pauses while its page is hidden). A catalog read sends back the
-entity tag of the copy it holds (`If-None-Match`), and a 304 is that copy: nothing
-is read or published again. `dispose()` stops polling, aborts
+(the web's pauses while its page is hidden). `dispose()` stops polling, aborts
 requests and disposes render sessions. The client lazily owns its cache provider
 and bounded write-back queue; each render session borrows a cancellable cache
 view and owns its abort signal and worker leases. A host whose transport
