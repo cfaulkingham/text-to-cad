@@ -55,6 +55,22 @@ export const PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_NEUTRAL_MIX = 0.02;
 // fits; occlusion fades out over `height` times the larger of that height and
 // half the footprint.
 export const PHOTOGRAPHIC_STUDIO_CONTACT_SHADOW = Object.freeze({ reach: 0.85, height: 0.5 });
+// The floor's two finishes (Display's Floor finish). Matte reflects the studio broadly,
+// so the floor reads as the backdrop's colour. Glossy reflects its softbox and strips as
+// soft highlights, and the model itself (studioFloorReflection.js, at half the canvas's
+// resolution): crisp where the model meets the floor, softening and fading over its
+// height. `strength` is the reflection's weight at grazing and `normalWeight` the share
+// of it looking straight down.
+export const PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES = Object.freeze({
+  matte: Object.freeze({ roughness: 0.88, envMapIntensity: 0.22, reflection: null }),
+  glossy: Object.freeze({
+    roughness: 0.35,
+    envMapIntensity: 0.22,
+    reflection: Object.freeze({
+      resolution: 0.5, blur: 2, sharpBlur: 0, blurHeight: 0.8, fadeHeight: 1, strength: 0.75, normalWeight: 0.45
+    })
+  })
+});
 
 // Full square-ground width relative to model-bounds radius. Keep the camera's
 // fitted far padding on this same multiplier so the ordinary-depth frustum

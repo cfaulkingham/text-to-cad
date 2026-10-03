@@ -26,6 +26,9 @@ const SURFACE_STYLE_OPTIONS = [
   { value: "shaded", label: "Shaded" }, { value: "flat", label: "Flat" },
   { value: "hidden", label: "Hidden" }, { value: "off", label: "Off" }
 ];
+const FLOOR_PLACEMENT_OPTIONS = [{ value: "origin", label: "Model origin" }, { value: "lowest", label: "Lowest point" }];
+// Glossy reflects the model too, at the cost of a second, smaller draw of the scene.
+const FLOOR_FINISH_OPTIONS = [{ value: "matte", label: "Matte" }, { value: "glossy", label: "Glossy" }];
 
 function ColorPalette({ colors, onChange }) {
   const palette = Array.isArray(colors) && colors.length ? colors : ["#ffffff"];
@@ -180,8 +183,12 @@ export function DisplaySettingsSection({
       section("background", "Background", color("background", "Background color")),
       section("floor", "Floor", <>
         {color("floor", "Floor color")}
-        <FileSheetSelectRow hideLabel label="Floor position" value={view.floor.placement} onValueChange={placement => setGroup("floor", { placement })}
-          options={[{ value: "origin", label: "Model origin" }, { value: "lowest", label: "Lowest point" }]} />
+        <FileSheetFieldGrid>
+          <FileSheetSelectRow hideLabel className="px-0" label="Floor position" value={view.floor.placement} onValueChange={placement => setGroup("floor", { placement })}
+            options={FLOOR_PLACEMENT_OPTIONS} />
+          <FileSheetSelectRow hideLabel className="px-0" label="Floor finish" value={view.floor.finish} onValueChange={finish => setGroup("floor", { finish })}
+            options={FLOOR_FINISH_OPTIONS} />
+        </FileSheetFieldGrid>
       </>),
       // The host's own on/off settings, last: the app's, not the file's view (`appSettings`).
       ...appSettingsSections(appSettings),

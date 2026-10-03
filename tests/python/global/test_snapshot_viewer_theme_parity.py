@@ -77,6 +77,7 @@ class SharedDisplayContractParityTests(unittest.TestCase):
             {"lighting": {"quality": "final", "exposure": 5, "rotation": 180, "size": 3, "fill": 1}},
             {"background": {"opacity": 0.35}}, {"edges": {"visibility": "all", "color": "#fff"}},
             {"floor": {"placement": "lowest", "opacity": 1}},
+            {"floor": {"finish": "glossy"}}, {"floor": {"placement": "origin", "finish": "matte"}},
             {"clip": {"enabled": True, "axis": "y", "offset": 0.5, "offsets": {"x": 0, "y": 1}, "invert": False}},
             {"exploded": {"enabled": True, "amount": 1}},
         ]
@@ -93,6 +94,7 @@ class SharedDisplayContractParityTests(unittest.TestCase):
             {"lighting": {"quality": None}}, {"lighting": {"exposure": -5.01}},
             {"lighting": {"rotation": -180.1}}, {"lighting": {"size": 0.24}},
             {"lighting": {"fill": "0.5"}}, {"floor": {"placement": "auto"}},
+            {"floor": {"finish": "shiny"}}, {"floor": {"finish": True}},
             {"background": {"opacity": -0.1}}, {"background": {"color": "white"}},
             {"clip": {"axis": "w"}}, {"clip": {"offsets": {"w": 0.5}}},
             {"clip": {"offsets": None}}, {"exploded": {"amount": 1.01}},
@@ -111,6 +113,7 @@ class SharedDisplayContractParityTests(unittest.TestCase):
             {"mode": "solid", "lighting": {"exposure": 1}},
             {"mode": "render", "floor": {"enabled": False}, "background": {"opacity": 0.35}},
             {"mode": "render", "camera": {"projection": "orthographic"}, "grid": {"color": "#abc"}},
+            {"mode": "render", "floor": {"finish": "glossy"}},
         ]
         packets = [normalize_common_job({"input": "part.step", "outputs": [{"path": "out.png"}], "display": value},
                                       mode="view", resolved_cwd=Path("."), timestamp="parity")["display"] for value in cases]
@@ -124,6 +127,8 @@ class SharedDisplayContractParityTests(unittest.TestCase):
         self.assertEqual(0.35, actual[6]["background"]["opacity"])
         self.assertTrue(actual[7]["grid"]["enabled"])
         self.assertEqual("#aabbcc", actual[7]["grid"]["color"])
+        self.assertEqual("matte", actual[1]["floor"]["finish"])
+        self.assertEqual("glossy", actual[8]["floor"]["finish"])
 
     def test_public_camera_keys_match_the_shared_pose_fields(self):
         self.assertEqual(set(javascript('CAMERA_SPEC_KEYS.filter(key => !["projection", "focalLength"].includes(key))')), set(CAMERA_OPTION_KEYS))

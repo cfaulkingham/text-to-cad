@@ -61,7 +61,7 @@ Projection remains editable in every preset, including orthographic Render.
 | Edges | Visible/all, color | No CAD edges |
 | Lighting | Quality, exposure, rotation, softbox size, fill | Neutral CAD lighting/reflections |
 | Background | Color and opacity | Natural light/dark workbench background |
-| Floor | Origin/lowest point, color and opacity | No floor |
+| Floor | Origin/lowest point, Matte/Glossy finish, color and opacity | No floor |
 | Grid | Color and opacity | No grid |
 | Axes | Color and opacity (same default color as Grid) | No origin axes |
 
@@ -103,7 +103,7 @@ framing and snapshots, but is not a routine viewer control.
   "camera": { "projection": "orthographic" },
   "lighting": { "enabled": false },
   "background": { "color": "#ffffff", "opacity": 0.4 },
-  "floor": { "placement": "origin", "color": "#dddddd", "opacity": 0.8 }
+  "floor": { "placement": "origin", "color": "#dddddd", "opacity": 0.8, "finish": "glossy" }
 }
 ```
 
@@ -177,6 +177,14 @@ floor follows every frame and the contact darkening under the model at most ever
 100 ms; once the model stops, both are baked for its final pose. A floor at zero
 opacity bakes nothing, and a viewer that renders in software, whose key casts no
 shadow, draws no floor shadow.
+Its finish is Matte, or Glossy: a glossier floor that also reflects the model, crisp
+where the model meets it and softening and fading over the model's height, as a
+polished studio floor shows a product, in either appearance. The reflection is a
+second draw of the scene at half the canvas's resolution, before each frame the camera
+or the model moved in (about 4 ms of render CPU a frame on a large assembly); a hover
+or selection keeps the last one and catches up within 400 ms. A Matte floor allocates
+none of it and draws nothing extra, and switching back to Matte releases it. With
+Render's lighting off, or in software, a glossy floor reflects nothing.
 Its double-sided surface uses its actual elevation during
 camera depth fitting, avoiding the origin-placement near-plane gap. Its color
 and opacity are independent of Background.

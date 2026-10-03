@@ -101,7 +101,7 @@ transparent and 1 for opaque.
 | `edges` | `visibility`: `visible` or `all`; hex `color` |
 | `lighting` | `quality`: `preview` or `final`; `exposure`: -5–5; `rotation`: -180–180 degrees; `size`: 0.25–3; `fill`: 0–1 |
 | `background` | hex `color`; `opacity`: 0–1, including partial PNG alpha |
-| `floor` | `placement`: `lowest` or `origin`; hex `color`; `opacity`: 0–1 |
+| `floor` | `placement`: `lowest` or `origin`; `finish`: `matte` or `glossy`; hex `color`; `opacity`: 0–1 |
 | `grid`, `axes` | hex `color`; `opacity`: 0–1 |
 
 Render's floor defaults to the document's Z=0 plane. `placement: "lowest"` moves

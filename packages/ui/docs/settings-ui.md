@@ -417,7 +417,7 @@ Escape closes the innermost popup first, the popover only on a later press.
 | Grid / Axes | Two color/opacity controls, left and right in title order, no visible labels |
 | Lighting | Quality, exposure, rotation, softbox size and fill |
 | Background | Color and opacity |
-| Floor | Color/opacity and placement |
+| Floor | Color/opacity; position and finish side by side |
 | The host's (Analytics, ...) | The host's on/off settings (`appSettings`), one section per `section` they name, one checkbox row each; only where the host gives some |
 
 Display, Surfaces and the host's sections are always open. Every other section is a feature gate

@@ -62,7 +62,7 @@ test("omitted Render fields stay sparse while configuration expands effective de
     quality: "final",
     exposure: 0,
     lighting: { rotation: 0, size: 1, fill: 0.25 },
-    backdrop: { color: "#ffffff", transparent: false, ground: true, groundPlacement: "origin", groundColor: "#e7e7e5", groundOpacity: 0.6 }
+    backdrop: { color: "#ffffff", transparent: false, ground: true, groundPlacement: "origin", groundColor: "#e7e7e5", groundOpacity: 0.6, groundFinish: "matte" }
   });
   assert.equal(camera.projection, "orthographic");
   assert.deepEqual(light.camera, camera);
@@ -94,7 +94,7 @@ test("explicit studios pin only the backdrop default", () => {
     quality: "final",
     exposure: 1.5,
     lighting: { rotation: -45, size: 2, fill: 0 },
-    backdrop: { color: "#123456", transparent: true, ground: false, groundPlacement: "lowest", groundColor: "#123456", groundOpacity: 0.6 }
+    backdrop: { color: "#123456", transparent: true, ground: false, groundPlacement: "lowest", groundColor: "#123456", groundOpacity: 0.6, groundFinish: "matte" }
   });
 });
 

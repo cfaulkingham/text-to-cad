@@ -8,11 +8,13 @@ import {
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_INTENSITY,
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_NEUTRAL_MIX,
   PHOTOGRAPHIC_STUDIO_CONTACT_SHADOW,
+  PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES,
   PHOTOGRAPHIC_STUDIO_KEY_DIRECTION,
   PHOTOGRAPHIC_STUDIO_KEY_ILLUMINANCE,
   PHOTOGRAPHIC_STUDIO_STAGE_RADIUS_MULTIPLIER
 } from "./photographicStudioRig.js";
 import { createStudioContactShadow } from "./studioContactShadow.js";
+import { createStudioFloorReflection } from "./studioFloorReflection.js";
 
 function component(value, axis, fallback) {
   if (Array.isArray(value)) return finiteOr(value[axis], fallback);
@@ -64,7 +66,8 @@ function resolvedConfiguration(configuration = {}) {
         : DEFAULT_RENDER_BACKDROP.ground,
       groundPlacement: backdrop.groundPlacement ?? DEFAULT_RENDER_BACKDROP.groundPlacement,
       groundColor: backdrop.groundColor ?? backdrop.color ?? "#e7e7e5",
-      groundOpacity: clamp(finiteOr(backdrop.groundOpacity, DEFAULT_RENDER_BACKDROP.groundOpacity), 0, 1)
+      groundOpacity: clamp(finiteOr(backdrop.groundOpacity, DEFAULT_RENDER_BACKDROP.groundOpacity), 0, 1),
+      groundFinish: backdrop.groundFinish === "glossy" ? "glossy" : "matte"
     }
   };
 }
@@ -83,6 +86,7 @@ function disposeGround(state) {
   state.ground.geometry?.dispose?.();
   disposeMaterial(state.ground.material);
   state.contactShadow?.dispose();
+  releaseReflection(state);
   state.ground = null;
   state.contactShadow = null;
   state.groundKind = null;
@@ -99,6 +103,26 @@ function updatePhysicalGroundColor(material, color) {
     * PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_NEUTRAL_MIX;
   material.emissive.b += (1 - material.emissive.b)
     * PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_NEUTRAL_MIX;
+}
+
+// The floor's shading is a few shallow gradients (the sweep's reflection, the key's
+// pool, the floor shadow over it). On a dark floor they span a handful of the
+// canvas's 8-bit levels, a few percent of luminance each, so rounding draws them as
+// wavy contour bands; on a light floor a level is under a percent and nothing shows.
+// Triangular noise of up to one level, divided by the fragment's alpha so the floor's
+// blend leaves it at full size, turns the bands into grain too fine to see and leaves
+// every average colour as it was.
+const FLOOR_DITHER_FRAGMENT = /* glsl */ `
+gl_FragColor.rgb += (rand(gl_FragCoord.xy) + rand(gl_FragCoord.yx + 17.0) - 1.0)
+  / (255.0 * max(gl_FragColor.a, 0.05));
+`;
+
+function patchFloor(material, reflection) {
+  material.onBeforeCompile = (shader) => {
+    reflection?.patch(shader);
+    shader.fragmentShader = shader.fragmentShader.replace("#include <dithering_fragment>", FLOOR_DITHER_FRAGMENT);
+  };
+  material.customProgramCacheKey = () => (reflection ? "studio-floor-reflection" : "studio-floor-dither");
 }
 
 function createState(THREE, runtime) {
@@ -125,6 +149,11 @@ function createState(THREE, runtime) {
     shadowMapSize: null,
     ground: null,
     contactShadow: null,
+    reflection: null,
+    reflectionHidden: null,
+    restoreSceneHook: null,
+    reflecting: false,
+    scene: runtime.scene,
     groundKind: null,
     original: {
       toneMapping: runtime.renderer.toneMapping,
@@ -141,9 +170,77 @@ function createState(THREE, runtime) {
   };
 }
 
+function reflectFloor(state, renderer, scene, camera) {
+  const ground = state.ground;
+  if (!state.reflection || state.reflecting) return;
+  if (!ground?.visible || !(ground.material.opacity > 0)) return;
+  // The mirrored draw renders this same scene: its own onBeforeRender must not recurse.
+  state.reflecting = true;
+  try {
+    state.reflection.beforeRender(renderer, scene, camera, state.reflectionHidden());
+  } finally {
+    state.reflecting = false;
+  }
+}
+
+// A glossy floor's reflection of the model is drawn before each frame of the scene
+// (studioFloorReflection.js says why there), whoever draws it: the viewer or a snapshot.
+// The hook exists only while the floor reflects, and goes with the reflection.
+function hookScene(state) {
+  const scene = state.scene;
+  const ownHook = Object.hasOwn(scene, "onBeforeRender");
+  const previousHook = scene.onBeforeRender;
+  scene.onBeforeRender = function studioFloorBeforeRender(renderer, drawnScene, camera, renderTarget) {
+    previousHook.call(this, renderer, drawnScene, camera, renderTarget);
+    reflectFloor(state, renderer, drawnScene, camera);
+  };
+  state.restoreSceneHook = () => {
+    if (ownHook) scene.onBeforeRender = previousHook;
+    else delete scene.onBeforeRender;
+  };
+}
+
+function releaseReflection(state) {
+  if (!state.reflection) return;
+  state.restoreSceneHook?.();
+  state.reflection.dispose();
+  state.reflection = null;
+  state.reflectionHidden = null;
+  state.restoreSceneHook = null;
+}
+
+/**
+ * The physical floor's finish (`backdrop.groundFinish`). Matte is the floor alone; glossy is
+ * a glossier floor that also reflects the model, which exists only while it is shown: with
+ * the studio's lighting off, or in software, a glossy floor reflects nothing (as it casts no
+ * shadow), and a matte one allocates nothing of it.
+ */
+function updateFloorFinish(THREE, state, configuration, { contactShadow, softwareRendering, guides }) {
+  const finish = PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES[configuration.backdrop.groundFinish];
+  const material = state.ground.material;
+  material.roughness = finish.roughness;
+  material.envMapIntensity = finish.envMapIntensity;
+  const reflects = Boolean(finish.reflection) && configuration.lighting.enabled && !softwareRendering;
+  if (reflects === Boolean(state.reflection)) return;
+  if (reflects) {
+    state.reflection = createStudioFloorReflection(THREE, {
+      ...finish.reflection,
+      requestFrame: contactShadow.requestFrame || null
+    });
+    // Nothing of the floor itself, nor a guide lying on it, is reflected.
+    state.reflectionHidden = () => [state.ground, state.contactShadow?.layer, ...guides()].filter(Boolean);
+    hookScene(state);
+  } else {
+    releaseReflection(state);
+  }
+  patchFloor(material, state.reflection);
+  material.needsUpdate = true;
+}
+
 function updateGround(THREE, state, configuration, bounds, sceneScale, extentBounds = bounds, {
   contactShadow = {},
-  softwareRendering = false
+  softwareRendering = false,
+  guides = () => []
 } = {}) {
   if (!configuration.backdrop.ground) {
     disposeGround(state);
@@ -160,9 +257,9 @@ function updateGround(THREE, state, configuration, bounds, sceneScale, extentBou
         color: configuration.backdrop.color,
         emissive: configuration.backdrop.color,
         emissiveIntensity: PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_INTENSITY,
-        roughness: 0.88,
+        roughness: PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES.matte.roughness,
         metalness: 0,
-        envMapIntensity: 0.22,
+        envMapIntensity: PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES.matte.envMapIntensity,
         transparent: true,
         opacity: configuration.backdrop.groundOpacity
       });
@@ -176,6 +273,7 @@ function updateGround(THREE, state, configuration, bounds, sceneScale, extentBou
     material.polygonOffset = true;
     material.polygonOffsetFactor = 1;
     material.polygonOffsetUnits = 1;
+    if (kind === "physical") patchFloor(material, null);
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
     ground.name = "studio-ground";
     // The physical floor takes its shadow from the contact layer, which softens it;
@@ -195,6 +293,7 @@ function updateGround(THREE, state, configuration, bounds, sceneScale, extentBou
 
   if (state.groundKind === "physical") {
     updatePhysicalGroundColor(state.ground.material, configuration.backdrop.groundColor);
+    updateFloorFinish(THREE, state, configuration, { contactShadow, softwareRendering, guides });
   }
   state.ground.material.opacity = configuration.backdrop.groundOpacity;
   const minimumSize = sceneScale === "urdf" ? 0.5 : 100;
@@ -216,10 +315,11 @@ function updateGround(THREE, state, configuration, bounds, sceneScale, extentBou
   state.ground.scale.set(stageSize, stageSize, 1);
   state.ground.position.set(extentBounds.center[0], extentBounds.center[1], groundZ);
   state.ground.updateMatrixWorld(true);
+  const above = Math.max(extentBounds.max[2] - groundZ, extentBounds.radius * 0.05);
+  state.reflection?.place({ floorZ: groundZ, height: above });
   if (state.contactShadow) {
     // Fitted to the rest placement too: a pose re-bakes the shadow, never moves it.
     const halfSpan = Math.max(spanX, spanY) / 2;
-    const above = Math.max(extentBounds.max[2] - groundZ, extentBounds.radius * 0.05);
     state.contactShadow.place({
       center: extentBounds.center,
       half: halfSpan + above * PHOTOGRAPHIC_STUDIO_CONTACT_SHADOW.reach,
@@ -351,7 +451,8 @@ export function applyPhotographicStudio(THREE, runtime, configuration = {}, {
   );
   updateGround(THREE, state, resolved, resolvedBounds, sceneScale,
     groundBounds ? resolveBounds(groundBounds, runtime.modelRadius) : resolvedBounds,
-    { contactShadow, softwareRendering: runtime.softwareRendering === true });
+    { contactShadow, softwareRendering: runtime.softwareRendering === true,
+      guides: () => [runtime.gridHelper, runtime.originAxis] });
 
   runtime.invalidateShadows?.();
   runtime.requestRender?.();

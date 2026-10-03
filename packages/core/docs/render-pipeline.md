@@ -199,6 +199,29 @@ runtime that renders in software (`softwareRendering`) gets no contact layer:
 its key casts no shadow either. A transparent legacy backdrop's floor stays a
 `ShadowMaterial` catcher of the key's shadow.
 
+The floor and its shadow layer are dithered: each adds up to one 8-bit level of
+noise as it is drawn (the floor's divided by its alpha, so its blend keeps it
+whole; the layer's drawn premultiplied, so the blend adds exactly that noise over
+whatever floor is under it). A dark floor's shading spans only a few levels of
+the canvas, and rounding drew it as wavy contour bands; the noise is too fine to
+see and leaves every average colour where it was.
+
+The floor's finish is `backdrop.groundFinish` (`PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES`):
+`matte`, the default, or `glossy`, a glossier surface that also reflects the model
+(`studioFloorReflection.js`). Before each frame of the scene (its `onBeforeRender`)
+the scene is drawn again from the camera mirrored in the floor, at half the
+canvas's resolution; four small passes fade and soften it with each reflected
+point's height (crisp where the model meets the floor), and the floor lays it over
+itself with a Fresnel weight, in display colour, so a light floor shows it as a
+dark one does. The mirrored draw runs when the camera moved or the frame re-renders
+shadows (it renders them, and the frame keeps them); a frame for a highlight keeps
+the last reflection and catches up within 400 ms; a snapshot draws it every frame.
+It runs before the frame, at the frame's own render depth and into a target three
+treats as the canvas (`isXRRenderTarget`): drawn nested in the frame, or as an
+ordinary target, it made every lit material rebuild its program key twice a frame,
+which cost more than the draw. A matte floor allocates none of it; turning the
+floor matte, the studio's lighting off or the floor off releases it.
+
 Environment radiance and direct illumination are calibrated together at zero EV
 across colored assemblies, gray mechanical models, and authored metal/plastic
 finishes.

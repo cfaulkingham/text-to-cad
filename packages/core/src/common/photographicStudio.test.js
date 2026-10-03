@@ -8,6 +8,7 @@ import {
   disposePhotographicStudio
 } from "./photographicStudio.js";
 import {
+  PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES,
   PHOTOGRAPHIC_STUDIO_GROUND_DIFFUSE_WEIGHT,
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_INTENSITY,
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_NEUTRAL_MIX,
@@ -57,7 +58,8 @@ function configuration(overrides = {}) {
       ground: overrides.ground ?? true,
       groundPlacement: overrides.groundPlacement ?? "origin",
       ...(overrides.groundColor != null ? { groundColor: overrides.groundColor } : {}),
-      ...(overrides.groundOpacity != null ? { groundOpacity: overrides.groundOpacity } : {})
+      ...(overrides.groundOpacity != null ? { groundOpacity: overrides.groundOpacity } : {}),
+      ...(overrides.groundFinish != null ? { groundFinish: overrides.groundFinish } : {})
     }
   };
 }
@@ -384,6 +386,70 @@ test("the physical floor carries a soft contact shadow fitted to the rest placem
   assert.equal(value.scene.getObjectByName("studio-contact-shadow"), undefined);
 });
 
+
+test("the floor and its shadow are dithered: a dark floor's shallow gradients round to grain, not bands", () => {
+  const value = runtime();
+  const state = applyPhotographicStudio(THREE, value, configuration({ color: "#121315" }));
+  const shader = {
+    uniforms: {},
+    vertexShader: "#include <common>\nvoid main() {\n#include <fog_vertex>\n}",
+    fragmentShader: "#include <common>\nvoid main() {\n#include <dithering_fragment>\n}"
+  };
+  state.ground.material.onBeforeCompile(shader);
+  // Up to a level either way, scaled through the floor's blend so it survives at full size.
+  assert.match(shader.fragmentShader, /rand\(gl_FragCoord\.xy\)/);
+  assert.match(shader.fragmentShader, /255\.0 \* max\(gl_FragColor\.a/);
+  assert.doesNotMatch(shader.fragmentShader, /#include <dithering_fragment>/);
+  // Its shadow darkens the floor in a pass of its own, rounded again: dithered too.
+  assert.match(state.contactShadow.layer.material.fragmentShader, /ditherNoise\(gl_FragCoord\.xy/);
+  disposePhotographicStudio(value);
+});
+
+test("a matte floor allocates nothing of a glossy one's reflection, which goes again once the floor is matte or unlit", () => {
+  const value = runtime();
+  const floorShader = (material) => {
+    const shader = {
+      uniforms: {},
+      vertexShader: "#include <common>\nvoid main() {\n#include <fog_vertex>\n}",
+      fragmentShader: "#include <common>\nvoid main() {\n#include <dithering_fragment>\n}"
+    };
+    material.onBeforeCompile(shader);
+    return shader.fragmentShader;
+  };
+  const matte = applyPhotographicStudio(THREE, value, configuration({ groundFinish: "matte" }));
+  assert.equal(matte.reflection, null, "no mirrored draw, no targets");
+  assert.equal(Object.hasOwn(value.scene, "onBeforeRender"), false, "and nothing runs before a frame");
+  assert.equal(matte.ground.material.roughness, PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES.matte.roughness);
+  assert.doesNotMatch(floorShader(matte.ground.material), /uReflection/);
+
+  const glossy = applyPhotographicStudio(THREE, value, configuration({ groundFinish: "glossy" }));
+  const reflection = glossy.reflection;
+  assert.ok(reflection);
+  assert.equal(Object.hasOwn(value.scene, "onBeforeRender"), true, "drawn before each frame of the scene");
+  assert.equal(glossy.ground.material.roughness, PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES.glossy.roughness);
+  assert.match(floorShader(glossy.ground.material), /uReflection/);
+  let released = 0;
+  const dispose = reflection.dispose;
+  reflection.dispose = () => { released += 1; dispose(); };
+  applyPhotographicStudio(THREE, value, configuration({ groundFinish: "glossy" }));
+  assert.equal(value.photographicStudio.reflection, reflection, "an unchanged finish keeps its reflection");
+
+  // With the studio's lighting off a glossy floor reflects nothing, as it casts no shadow.
+  const unlit = configuration({ groundFinish: "glossy" });
+  unlit.lighting.enabled = false;
+  applyPhotographicStudio(THREE, value, unlit);
+  assert.equal(value.photographicStudio.reflection, null);
+  assert.equal(released, 1);
+  assert.equal(Object.hasOwn(value.scene, "onBeforeRender"), false);
+
+  applyPhotographicStudio(THREE, value, configuration({ groundFinish: "glossy" }));
+  assert.ok(value.photographicStudio.reflection);
+  applyPhotographicStudio(THREE, value, configuration({ groundFinish: "matte" }));
+  assert.equal(value.photographicStudio.reflection, null);
+  assert.equal(Object.hasOwn(value.scene, "onBeforeRender"), false);
+  assert.equal(value.photographicStudio.ground.material.roughness, PHOTOGRAPHIC_STUDIO_FLOOR_FINISHES.matte.roughness);
+  disposePhotographicStudio(value);
+});
 
 test("a software-rendered viewer gets no floor shadow, and a viewer's bake schedule reaches the one it gets", () => {
   const software = runtime();

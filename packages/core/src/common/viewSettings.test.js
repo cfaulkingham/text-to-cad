@@ -218,3 +218,22 @@ test("only the Grid preset draws the grid and axes: Solid's surfaces on a finer,
   assert.equal(resolveViewSettings({ mode: "solid", grid: { enabled: true } }).grid.density, 1);
   assert.equal(viewSettingsAreCustom({ mode: "grid" }), false);
 });
+
+test("the floor is matte until Glossy is chosen, and a snapshot gives the studio the finish the viewer does", () => {
+  assert.deepEqual(normalizeViewSettings({ floor: { finish: "glossy" } }), { mode: "solid", floor: { finish: "glossy" } });
+  for (const finish of ["shiny", "Glossy", true, null]) assert.throws(() => normalizeViewSettings({ floor: { finish } }));
+  for (const mode of VIEW_PRESET_VALUES) assert.equal(resolveViewSettings({ mode }).floor.finish, "matte");
+  assert.equal(resolveViewSettings({ mode: "render", floor: { finish: "glossy" } }).floor.finish, "glossy");
+  assert.equal(resolveViewSettings({ mode: "render", floor: { enabled: false, finish: "glossy" } }).floor.finish, "matte",
+    "a floor turned off is the neutral one");
+  assert.equal(viewSettingsAreCustom({ mode: "render", floor: { finish: "glossy" } }), true);
+  assert.equal(viewSettingsAreCustom({ mode: "render", floor: { finish: "matte" } }), false);
+  assert.deepEqual(resetViewSettings({ mode: "render", floor: { finish: "glossy" } }), { mode: "render" });
+  // The viewer's store and a snapshot's job resolve one display through the same recipe.
+  for (const display of [{ mode: "render" }, { mode: "render", floor: { finish: "glossy" } }, { mode: "render", floor: { finish: "matte", placement: "lowest" } }]) {
+    const viewer = resolveViewSceneSettings({ display }).render.configuration.backdrop;
+    const snapshot = renderJobContext(mesh(), { kind: "step", display }).sceneSettings.render.configuration.backdrop;
+    assert.equal(snapshot.groundFinish, display.floor?.finish ?? "matte");
+    assert.deepEqual(snapshot, viewer);
+  }
+});

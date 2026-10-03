@@ -112,7 +112,8 @@ export const RENDER_BACKDROP_KEYS = Object.freeze([
   "ground",
   "groundPlacement",
   "groundColor",
-  "groundOpacity"
+  "groundOpacity",
+  "groundFinish"
 ]);
 
 const RENDER_STUDIO_IDS = new Set(RENDER_STUDIO_PRESETS.map((preset) => preset.id));
@@ -131,7 +132,8 @@ export const DEFAULT_RENDER_BACKDROP = Object.freeze({
   transparent: false,
   ground: true,
   groundPlacement: "origin",
-  groundOpacity: 0.6
+  groundOpacity: 0.6,
+  groundFinish: "matte"
 });
 
 const STUDIO_BACKDROP_COLORS = Object.freeze({
@@ -212,6 +214,9 @@ function validateRenderBackdrop(value) {
   if (Object.hasOwn(value, "ground")) validateBoolean(value.ground, "render.backdrop.ground");
   if (Object.hasOwn(value, "groundPlacement") && !["origin", "lowest"].includes(value.groundPlacement)) {
     throw new Error("render.backdrop.groundPlacement must be origin or lowest");
+  }
+  if (Object.hasOwn(value, "groundFinish") && !["matte", "glossy"].includes(value.groundFinish)) {
+    throw new Error("render.backdrop.groundFinish must be matte or glossy");
   }
 }
 
@@ -311,7 +316,8 @@ function resolveRenderConfiguration(render = {}, appearance = SCENE_APPEARANCE.L
       ground: payload.backdrop?.ground ?? DEFAULT_RENDER_BACKDROP.ground,
       groundPlacement: payload.backdrop?.groundPlacement ?? DEFAULT_RENDER_BACKDROP.groundPlacement,
       groundColor: payload.backdrop?.groundColor || payload.backdrop?.color || STUDIO_GROUND_COLORS[studio],
-      groundOpacity: payload.backdrop?.groundOpacity ?? DEFAULT_RENDER_BACKDROP.groundOpacity
+      groundOpacity: payload.backdrop?.groundOpacity ?? DEFAULT_RENDER_BACKDROP.groundOpacity,
+      groundFinish: payload.backdrop?.groundFinish ?? DEFAULT_RENDER_BACKDROP.groundFinish
     }
   };
 }
@@ -570,7 +576,8 @@ export function resolveViewSceneSettings({
       ground: view.floor.enabled,
       groundPlacement: view.floor.placement,
       groundColor: view.floor.color,
-      groundOpacity: view.floor.opacity
+      groundOpacity: view.floor.opacity,
+      groundFinish: view.floor.finish
     },
     camera: cameraSettings
   } : null;

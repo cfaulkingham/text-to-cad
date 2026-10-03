@@ -202,5 +202,6 @@ cadgen step snapshot part.step review.png --display '{"mode":"render","floor":{"
 ```
 
 `display.floor.placement` accepts `origin` (the default) or `lowest`; it moves
-only the floor, never the model or lighting. `display.floor.enabled: false`
-removes the floor.
+only the floor, never the model or lighting. `display.floor.finish` accepts
+`matte` (the default) or `glossy`, the Viewer's Floor finish: a glossy floor also
+reflects the model. `display.floor.enabled: false` removes the floor.

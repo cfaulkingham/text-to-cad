@@ -119,6 +119,12 @@ uniform float uReady;
 uniform vec4 uStrength;
 varying vec2 vUv;
 
+// Up to one 8-bit level of noise per pixel (three's rand hash).
+float ditherNoise(vec2 uv) {
+  highp float dt = mod(dot(uv, vec2(12.9898, 78.233)), 3.141592653589793);
+  return fract(sin(dt) * 43758.5453) / 255.0;
+}
+
 void main() {
   vec4 s = texture2D(uShadow, vUv);
   // Occlusion: a tight dark line at contact under a broad, light falloff.
@@ -130,7 +136,12 @@ void main() {
   // Fade out inside the baked square, so its edge never shows.
   vec2 edge = min(vUv, 1.0 - vUv);
   darkness *= smoothstep(0.0, 0.08, min(edge.x, edge.y));
-  gl_FragColor = vec4(0.0, 0.0, 0.0, darkness * uOpacity * uReady);
+  float alpha = darkness * uOpacity * uReady;
+  // Darkening the floor rounds it to 8 bits again, and a shallow shadow on a dark
+  // floor bands. The colour, divided by alpha, is what the blend adds over the floor
+  // whatever its colour: exactly this noise, which dithers that rounding (and lifts
+  // the shadow by half a level on average).
+  gl_FragColor = vec4(vec3(min(ditherNoise(gl_FragCoord.xy + 7.31) / max(alpha, 1e-4), 1.0)), alpha);
 }
 `;
 

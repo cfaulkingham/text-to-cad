@@ -51,6 +51,23 @@ test("group edits are sparse and disabling discards only that group's overrides"
   view.unmount();
 });
 
+test("Floor finish sits right of Floor position on one two-column row, Matte until Glossy is chosen", () => {
+  const view = panel({ mode: "render" });
+  const floor = sections(view.tree).find(section => section.title === "Floor");
+  const row = elements(floor.content).find(node => node.type?.name === "FileSheetFieldGrid"
+    && elements(node.props.children).some(child => child.props?.label === "Floor finish"));
+  assert.equal(row.props.columns ?? 2, 2);
+  const selects = elements(row.props.children).filter(node => node.props?.label);
+  assert.deepEqual(selects.map(select => select.props.label), ["Floor position", "Floor finish"]);
+  const finish = selects[1];
+  assert.equal(finish.props.value, "matte");
+  assert.deepEqual(finish.props.options.map(option => [option.value, option.label]), [["matte", "Matte"], ["glossy", "Glossy"]]);
+  finish.props.onValueChange("glossy");
+  assert.deepEqual(view.settings().floor, { finish: "glossy" });
+  assert.equal(viewSettingsAreCustom(view.settings()), true);
+  view.unmount();
+});
+
 test("projection and tools update independent groups; only the view change is Custom", () => {
   const view = panel({ mode: "solid" });
   // Explode is a STEP tool with its own panel, and writes the same store.
