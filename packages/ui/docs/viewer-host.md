@@ -149,9 +149,10 @@ creates.
 Platform-agnostic UI can use DOM, canvas, React and renderer-owned workers.
 Filesystem access, transport selection, credentials, clipboard, persistent
 storage, page navigation and native process lifecycle remain host responsibilities.
-So do a transport's limits: a host whose channel carries large replies slowly
-declares the most one batched read may ask for (`createCadClient({ maxBatchBytes })`),
-and the shared loader never asks for more.
+So do a transport's limits: a host whose channel caps one reply declares the
+most one batched read may ask for (`createCadClient({ maxBatchBytes })`), and the
+shared loader never asks for more; the host carries a longer body in parts (the
+CAD app's tunnel reads it a range at a time), and the loader sees it whole.
 
 ## Prompt handoff
 

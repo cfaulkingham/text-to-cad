@@ -177,11 +177,13 @@ A package's open reads its cache in groups, as a snapshot does: one probe for a
 chunk of components and one TESB read for a batch of their bodies, each
 growing from the loader's first publish (eight components) to the server's
 bounds (256 keys, 32 MiB), in load order (`packageBatchReads.js`). A client
-whose transport carries large replies slowly declares a lower ceiling for a
-batch's bytes (`createCadClient({ maxBatchBytes })`, which its cache reports
-as `batchMaxBytes`): the CAD app's tunnel declares 8 MiB. A ceiling never
-raises the server's bound (`tessBatchMaxBytes`), and a body larger than the
-ceiling is read alone, as every body once was. A batch's
+whose transport caps one reply declares a lower ceiling for a batch's bytes
+(`createCadClient({ maxBatchBytes })`, which its cache reports as
+`batchMaxBytes`): the CAD app's tunnel declares 4 MiB, the most one of its
+replies carries. A ceiling never raises the server's bound
+(`tessBatchMaxBytes`), and a body larger than the ceiling is read alone, as
+every body once was; that transport carries it a range at a time and hands the
+provider the whole, which verifies its digest as it does any body's. A batch's
 framed bytes are charged to the Viewer envelope before it is read and released
 once its last component has taken its body; each component's decode is still
 admitted on its own before it runs, and an entry the batch could not read or

@@ -8,7 +8,10 @@ import { chatReach, createChatPromptContext } from './prompt';
 import { relaunch } from './relaunch';
 import { createServer, type SyncReply, type SyncRequest, type ViewEvent } from './server';
 import { createViewSync, LOST_AFTER, NEWS_MS, SYNC_MS } from './sync';
-import { createTunnelClient, createTunnelFetch, decodeBase64, encodeBase64, TUNNEL_BATCH_MAX_BYTES, TUNNEL_ORIGIN } from './tunnel';
+import {
+  createHttpTessellationCacheProvider, encodeComponentTessellation, tessellationPayloadFacts,
+} from '@text-to-cad/core/lib/surf/tessellationCache.js';
+import { createTunnelClient, createTunnelFetch, decodeBase64, encodeBase64, TUNNEL_ORIGIN, TUNNEL_REPLY_MAX_BYTES } from './tunnel';
 
 /** A host frame: records what the page posts and answers with `respond`. */
 function fakeHost(respond: (message: any) => unknown) {
@@ -261,19 +264,105 @@ describe('the fetch tunnel', () => {
     await expect(tunnel(`${TUNNEL_ORIGIN}/__cad/catalog`)).rejects.toThrow(TypeError);
   });
 
-  it('gives the app a CAD client whose batched reads ask for no more than the tunnel carries', () => {
+  it('gives the app a CAD client whose batched reads ask for no more than one reply carries', () => {
     const client = createTunnelClient(createTunnelFetch(createServer({ callTool: async () => ({}) }), { kind: 'workspace', path: '/p' }));
     const session = client.createRenderSession();
     try {
-      expect(TUNNEL_BATCH_MAX_BYTES).toBe(8 * 1024 * 1024);
-      expect(session.tessellationCache.batchMaxBytes).toBe(TUNNEL_BATCH_MAX_BYTES);
+      expect(TUNNEL_REPLY_MAX_BYTES).toBe(4 * 1024 * 1024);
+      expect(session.tessellationCache.batchMaxBytes).toBe(TUNNEL_REPLY_MAX_BYTES);
       expect(client.origin).toBe(TUNNEL_ORIGIN);
     } finally {
       session.dispose();
       client.dispose();
     }
   });
+
+  it('reads a body longer than one reply a part at a time, each within the bound, and hands over the whole', async () => {
+    const bytes = pattern(3 * TUNNEL_REPLY_MAX_BYTES + 1000);
+    const parted = servingInParts(bytes);
+    const reply = await createTunnelFetch(parted.server, { kind: 'workspace', path: '/p' })(`${TUNNEL_ORIGIN}/__cad/asset?file=big.stl`);
+    expect([reply.status, reply.headers.get('content-length'), reply.headers.get('content-range')]).toEqual([200, String(bytes.length), null]);
+    expect(same(new Uint8Array(await reply.arrayBuffer()), bytes)).toBe(true);
+    expect(parted.ranges).toEqual([0, 1, 2, 3].map(part => `bytes=${part * TUNNEL_REPLY_MAX_BYTES}-${Math.min(bytes.length, (part + 1) * TUNNEL_REPLY_MAX_BYTES) - 1}`));
+    expect(Math.max(...parted.sizes)).toBe(TUNNEL_REPLY_MAX_BYTES);
+  });
+
+  it('fails the read of a body that changed between its parts, or whose parts are out of place', async () => {
+    const bytes = pattern(TUNNEL_REPLY_MAX_BYTES + 10);
+    for (const parted of [
+      servingInParts(bytes, { etag: first => (first ? '"rewritten"' : '"v1"') }),
+      servingInParts(bytes, { offset: first => (first ? first + 1 : 0) }),
+    ]) {
+      const reply = await createTunnelFetch(parted.server, { kind: 'workspace', path: '/p' })(`${TUNNEL_ORIGIN}/__cad/asset?file=big.stl`);
+      await expect(reply.arrayBuffer()).rejects.toThrow(TypeError);
+    }
+  });
+
+  it('verifies a tessellation read in parts as a whole one: put together it is the body, and a damaged part makes it a miss', async () => {
+    const vertices = 200_000;
+    const triangles = 50_000;
+    const bytes = encodeComponentTessellation({
+      positions: new Float32Array(3 * vertices).map((_, index) => index % 97),
+      normals: new Float32Array(3 * vertices).fill(1),
+      faceOrds: new Float32Array(vertices).fill(1),
+      indices: new Uint32Array(3 * triangles).map((_, index) => index % vertices),
+      sideOrds: new Uint32Array(3 * triangles).fill(1),
+      faceRanges: [{ ord: 1, indexStart: 0, indexCount: 3 * triangles }],
+      edges: [],
+      bounds: { min: [0, 0, 0], max: [96, 96, 96] },
+      scale: 166,
+    }, { surfaceInput: '1'.repeat(64), surfaceObject: 'a'.repeat(64), edgeClasses: [] });
+    expect(bytes.length).toBeGreaterThan(TUNNEL_REPLY_MAX_BYTES);
+    const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    const row = { schemaVersion: 1, object: digest, ...tessellationPayloadFacts(bytes) };
+    const read = (parted: ReturnType<typeof servingInParts>) => createHttpTessellationCacheProvider({
+      origin: TUNNEL_ORIGIN, fetch: createTunnelFetch(parted.server, { kind: 'workspace', path: '/p' }), maxBatchBytes: TUNNEL_REPLY_MAX_BYTES,
+    }).getProbed(row, { maxBytes: row.byteLength });
+    const whole = await read(servingInParts(bytes, { etag: () => `"${digest}"` }));
+    expect(whole && same(whole, bytes)).toBe(true);
+    const damaged = servingInParts(bytes, { etag: () => `"${digest}"`, alter: (part, first) => (first === TUNNEL_REPLY_MAX_BYTES ? part.map(value => value ^ 1) : part) });
+    expect(await read(damaged)).toBeNull();
+    expect(damaged.ranges.length).toBe(2);
+  });
 });
+
+/** `length` bytes that differ from part to part. */
+function pattern(length: number) {
+  return new Uint8Array(length).map((_, index) => (index * 7 + (index >> 12)) & 255);
+}
+
+function same(a: Uint8Array, b: Uint8Array) {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) if (a[index] !== b[index]) return false;
+  return true;
+}
+
+/**
+ * A server that answers a ranged GET as `cadgen mcp` does (`cadgen/mcp/tunnel.py`) for a body
+ * longer than the range: its part (206). `etag` names the body a part is of, `offset` moves where
+ * a part starts, and `alter` changes a part's bytes.
+ */
+function servingInParts(bytes: Uint8Array, {
+  etag = (_first: number) => '"v1"', offset = (first: number) => first, alter = (part: Uint8Array, _first: number) => part,
+} = {}) {
+  const ranges: string[] = [];
+  const sizes: number[] = [];
+  const server = createServer({
+    callTool: async (_name, args: any) => {
+      ranges.push(args.headers.range);
+      const asked = /^bytes=(\d+)-(\d+)$/.exec(args.headers.range)!;
+      const first = offset(Number(asked[1]));
+      const last = Math.min(bytes.length - 1, Number(asked[2]));
+      const part = alter(bytes.slice(first, last + 1), first);
+      sizes.push(part.length);
+      return { structuredContent: { status: 206, body: encodeBase64(part), headers: {
+        'content-type': 'application/octet-stream', 'content-length': String(part.length),
+        'content-range': `bytes ${first}-${last}/${bytes.length}`, etag: etag(first),
+      } } };
+    },
+  });
+  return { server, ranges, sizes };
+}
 
 describe('a tab restored from an older build', () => {
   it('is launched again as it was: the home, a thread\'s tab, a file\'s tab or an agent\'s model', async () => {

@@ -194,8 +194,9 @@ inert; subscriptions start catalog polling, which the host's `shouldPoll` gates
 requests and disposes render sessions. The client lazily owns its cache provider
 and bounded write-back queue; each render session borrows a cancellable cache
 view and owns its abort signal and worker leases. A host whose transport
-carries large replies slowly passes `maxBatchBytes`: no batched read asks for
-more, nor ever more than the server's own bound. Switching views preserves
+caps one reply passes `maxBatchBytes`: no batched read asks for more, nor ever
+more than the server's own bound; a longer body is the transport's to carry in
+parts, and the client sees it whole. Switching views preserves
 admitted cache writes, while disposing the client releases them. Root identity
 comes from the server's stable
 `rootId`, not its port. Multiple roots render concurrently without replacing
