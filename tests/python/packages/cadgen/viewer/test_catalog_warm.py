@@ -171,14 +171,28 @@ class CatalogWarmTests(unittest.TestCase):
         real_open = catalog.open_shared_for_read
         opens = []
 
-        def holding_open(path):
-            handle = real_open(path)
-            opens.append(path)
-            if len(opens) == 1:  # the warm's read, of the first version
+        class HeldOnceRead:
+            """The warm's read of the first version, held after its bytes are read and the file
+            is closed but before the warm checks the path still names that version (Windows
+            refuses to replace a file someone holds open)."""
+
+            def __init__(self, handle) -> None:
+                self.handle = handle
+
+            def __enter__(self):
+                return self.handle.__enter__()
+
+            def __exit__(self, *exc):
+                closed = self.handle.__exit__(*exc)
                 held.set()
                 release.wait(HANG)
                 resumed.set()
-            return handle
+                return closed
+
+        def holding_open(path):
+            handle = real_open(path)
+            opens.append(path)
+            return HeldOnceRead(handle) if len(opens) == 1 else handle
 
         with mock.patch.object(catalog, "open_shared_for_read", holding_open):
             self.app.catalog_warm.saved({str(self.part): first})
