@@ -200,9 +200,13 @@ def _claim(path: Path) -> bool:
 
     Windows refuses the timestamp write while another process holds the file
     open (a sharing violation, WinError 32), so that one wait gets the same
-    bounded ladder the renames use. Any other refusal (a read-only store,
-    another owner's file) leaves the object as it is: claiming is never a new
-    way for a write to fail where finding the bytes used to succeed.
+    bounded ladder the renames use. POSIX lets only a file's owner set an
+    explicit time, but anyone who may write the file set it to now: in a store
+    several users share, an object another user owns is claimed with a stamp
+    of now, which is not settled as it is set, so its identity is forgotten.
+    Any other refusal (a read-only store, a file this user may not write)
+    leaves the object as it is: claiming is never a new way for a write to fail
+    where finding the bytes used to succeed.
     """
     key = str(path)
     for delay in (*RETRY_DELAYS_SECONDS, None):
@@ -225,6 +229,13 @@ def _claim(path: Path) -> bool:
             # The stamp is as it was, or unknown: keep nothing the next reader
             # could not confirm.
             forget_verified(key)
+            if isinstance(error, PermissionError) and os.name != "nt":
+                # Another user's object: setting it to now needs only write access.
+                try:
+                    os.utime(path)
+                    return True
+                except OSError:
+                    pass
             return path.is_file()
         _carry_verified(key, before, after, mtime_ns, resolution)
         return True

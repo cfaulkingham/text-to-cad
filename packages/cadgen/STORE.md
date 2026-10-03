@@ -1188,7 +1188,10 @@ own writers never rewrite an object in place (temp + rename, §11), and a
 reader that uses an object's bytes hashes them. A publish therefore claims on
 identity what its job verified, reading nothing, and holds the bytes only of
 what its own capture had to read -- which is what a claim that finds its object
-gone writes back.
+gone writes back. In a store several users share, POSIX lets only an object's
+owner set an explicit time, so a claim on another user's object stamps it now,
+which needs only write access: the object is claimed all the same, and its
+identity is forgotten, since a stamp of now is not settled as it is set.
 
 **A store two cadgens share.** Every cadgen on a machine uses the same store
 by default, and a pass can only judge what it can read. A newer cadgen's

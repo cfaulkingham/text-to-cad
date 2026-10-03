@@ -458,6 +458,34 @@ class VerifiedIdentityAcrossClaims(unittest.TestCase):
         self.assertLess(before - stamp[trees._STAMP_MTIME_NS], 5_000_000_000, "and recent enough for any sweep's window")
         self.assertEqual(delete_unclaimed(object_path(digest), time.time() - 3600), 0)
 
+    @unittest.skipIf(os.name == "nt", "POSIX lets only a file's owner set an explicit time")
+    def test_a_claim_on_an_object_another_user_owns_still_claims_it(self):
+        # A store several users share: a claim may set this object's time to now, but
+        # not to the explicit time it tries first.
+        import errno
+
+        from cadgen.store.objects import claim_object, delete_unclaimed, object_path, verified_stamp
+
+        digest = next(iter(trees.get_tree(self.children[0])["components"].values()))["brep"]
+        path = object_path(digest)
+        stat = path.stat()
+        aged_ns = stat.st_mtime_ns - 7200 * 1_000_000_000  # written before any sweep's grace window
+        os.utime(path, ns=(stat.st_atime_ns, aged_ns))
+        self.assertTrue(trees.tree_complete(self.tree))
+        self.assertIsNotNone(verified_stamp(str(path)))
+        utime = os.utime
+
+        def owner_only_explicit_times(target, times=None, *, ns=None):
+            if times is not None or ns is not None:
+                raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), os.fspath(target))
+            utime(target)
+
+        with mock.patch("os.utime", side_effect=owner_only_explicit_times):
+            self.assertTrue(claim_object(digest))
+        self.assertGreater(path.stat().st_mtime_ns, aged_ns, "the claim did not stamp the object")
+        self.assertEqual(delete_unclaimed(path, time.time() - 3600), 0, "claimed within the grace window")
+        self.assertIsNone(verified_stamp(str(path)), "a stamp of now is not settled as it is set")
+
     def test_damage_after_or_before_a_claim_is_caught(self):
         from cadgen.store.objects import object_path
 
