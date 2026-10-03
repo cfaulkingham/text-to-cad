@@ -88,7 +88,7 @@ __all__ = [
 CAD_CATALOG_SCHEMA_VERSION = 4
 
 SOURCE_EXTENSIONS = frozenset(
-    {".step", ".stp", ".stl", ".3mf", ".glb", ".dxf", ".urdf", ".srdf", ".sdf"}
+    {".step", ".stp", ".stl", ".3mf", ".glb", ".dxf", ".urdf", ".srdf", ".sdf", ".kicad_pcb", ".kicad_sch"}
 )
 
 # Dot-prefixed (hidden) directories are skipped generically, so this set only
