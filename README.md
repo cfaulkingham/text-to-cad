@@ -15,7 +15,7 @@ Give your agent CAD superpowers.
 [![cadgen](https://img.shields.io/pypi/v/cadgen?style=for-the-badge&logo=pypi&logoColor=white&label=cadgen)](https://pypi.org/project/cadgen/)
 [![build123d](https://img.shields.io/badge/build123d-0.11-2F6FB0?style=for-the-badge)](https://github.com/gumyr/build123d)
 [![Open CASCADE](https://img.shields.io/badge/Open%20CASCADE-7.9-E2001A?style=for-the-badge)](https://dev.opencascade.org)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](skills/cad/requirements.txt)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](packages/cadgen/pyproject.toml)
 [![Node.js](https://img.shields.io/badge/Node.js-20+-5FA04E?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org)
 
 </div>
@@ -80,7 +80,7 @@ the [latest release](https://pypi.org/project/cadgen/) and restart the app.
 ```json
 {
   "mcpServers": {
-    "cad": { "command": "uvx", "args": ["--no-config", "--from", "cadgen==0.7.10", "cadgen", "mcp"] }
+    "cad": { "command": "uvx", "args": ["--no-config", "--managed-python", "--python", "3.13", "--from", "cadgen==0.7.10", "cadgen", "mcp"] }
   }
 }
 ```
@@ -136,7 +136,10 @@ Gemini CLI installs the latest release as an extension, with the skills and CAD'
 server; `gemini extensions update text-to-cad` updates it. Like Grok, it shows
 tool results as text, so asking it to show a model gives you a CAD Viewer link.
 
-Restart your agent if newly installed skills do not appear.
+Restart your agent if newly installed skills do not appear. Updating the plugin
+updates CAD: the new release's cadgen is downloaded the first time it runs, and the
+skills and the server share it. Earlier releases stay in uv's cache until you run
+`uv cache prune`.
 
 ### Skills CLI
 
@@ -146,9 +149,10 @@ For an agent without a plugin, install the skills alone:
 npx skills add earthtojake/text-to-cad
 ```
 
-The skills install from `main`, and each skill's `requirements.txt` pins the
-`cadgen` release it was published with; without the plugin there is no CAD
-server, so the skills open models in the CAD Viewer in your browser.
+The skills install from `main`, and each one runs cadgen through
+[uv](https://docs.astral.sh/uv/) with the same pinned command the plugin's server
+uses, so uv must be installed. Without the plugin there is no CAD server, so the
+skills open models in the CAD Viewer in your browser.
 
 **Use the same command to update.** `add` re-fetches the package and overwrites
 what is already installed, so it both refreshes existing skills and installs any
