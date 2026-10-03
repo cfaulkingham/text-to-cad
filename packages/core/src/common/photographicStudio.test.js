@@ -11,7 +11,6 @@ import {
   PHOTOGRAPHIC_STUDIO_GROUND_DIFFUSE_WEIGHT,
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_INTENSITY,
   PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_NEUTRAL_MIX,
-  PHOTOGRAPHIC_STUDIO_GROUND_SHADOW_OPACITY,
   PHOTOGRAPHIC_STUDIO_KEY_DIRECTION,
   PHOTOGRAPHIC_STUDIO_STAGE_RADIUS_MULTIPLIER
 } from "./photographicStudioRig.js";
@@ -96,7 +95,8 @@ test("photographic studio applies one scale-stable key, Neutral exposure, and or
     state.ground.material.emissiveIntensity,
     PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_INTENSITY
   );
-  assert.equal(state.ground.receiveShadow, true);
+  assert.equal(state.ground.receiveShadow, false, "its shadow is the soft contact layer");
+  assert.ok(state.contactShadow);
   assert.equal(state.ground.position.x, 10);
   assert.equal(state.ground.position.y, 10);
   assert.equal(state.ground.position.z, 0);
@@ -340,34 +340,48 @@ test("floor color and opacity update independently while both sides remain visib
     assert.equal(state.ground.material, material);
     assert.equal(material.opacity, groundOpacity);
     assert.equal(material.depthWrite, false);
-    // The self-lit floor catches the key's shadow in proportion to its own opacity.
-    assert.equal(state.groundShadow.material.opacity, PHOTOGRAPHIC_STUDIO_GROUND_SHADOW_OPACITY * groundOpacity);
+    // The floor's shadow is as deep as the floor is opaque.
+    assert.equal(state.contactShadow.layer.material.uniforms.uOpacity.value, groundOpacity);
   }
   applyPhotographicStudio(THREE, value, configuration({ transparent: true, groundOpacity: 0.4 }));
   assert.equal(state.ground.material.isShadowMaterial, true);
   assert.equal(state.ground.material.opacity, 0.4);
   assert.equal(state.ground.material.forceSinglePass, true);
-  assert.equal(state.groundShadow, null, "the transparent backdrop's floor is itself the shadow catcher");
+  assert.equal(state.ground.receiveShadow, true, "the transparent backdrop's floor is itself the shadow catcher");
+  assert.equal(state.contactShadow, null);
   disposePhotographicStudio(value);
 });
 
-test("the physical floor carries the key's cast shadow while the studio lights it", () => {
+test("the physical floor carries a soft contact shadow fitted to the rest placement while the studio lights it", () => {
   const value = runtime();
-  const state = applyPhotographicStudio(THREE, value, configuration());
-  const shadow = state.ground.getObjectByName("studio-ground-shadow");
-  assert.equal(shadow, state.groundShadow);
-  assert.equal(shadow.material.isShadowMaterial, true);
-  assert.equal(shadow.receiveShadow, true);
-  assert.equal(shadow.geometry, state.ground.geometry);
-  assert.ok(shadow.renderOrder > state.ground.renderOrder, "drawn over the floor");
-  assert.equal(shadow.material.depthWrite, false);
-  assert.equal(shadow.visible, true);
+  const rest = { min: [-10, -20, 0], max: [30, 40, 15] };
+  const state = applyPhotographicStudio(THREE, value, configuration(), { bounds: rest, groundBounds: rest });
+  const contact = state.contactShadow;
+  assert.equal(state.ground.receiveShadow, false, "the floor's shadow is the contact layer's, softened");
+  assert.equal(state.ground.getObjectByName("studio-contact-shadow-layer"), undefined);
+  assert.equal(state.group.getObjectByName("studio-contact-shadow-layer"), contact.layer);
+  assert.ok(contact.layer.renderOrder > state.ground.renderOrder, "drawn over the floor");
+  assert.equal(contact.layer.material.depthWrite, false);
+  assert.equal(contact.layer.visible, true);
+  // Its height probe lights nothing: it never joins the scene.
+  assert.equal(value.scene.getObjectById(contact.probe.id), undefined);
+  // Centred under the rest placement and reaching past its footprint, at the floor.
+  assert.equal(contact.layer.position.x, 10);
+  assert.equal(contact.layer.position.y, 10);
+  assert.equal(contact.layer.position.z, 0);
+  assert.ok(contact.layer.scale.x > 60);
+  // A pose re-bakes the shadow; it never moves it.
+  const scale = contact.layer.scale.x;
+  applyPhotographicStudio(THREE, value, configuration(), {
+    bounds: { min: [-10, -20, 0], max: [90, 40, 15] }, groundBounds: rest
+  });
+  assert.equal(contact.layer.scale.x, scale);
   const unlit = configuration();
   unlit.lighting.enabled = false;
-  applyPhotographicStudio(THREE, value, unlit);
-  assert.equal(shadow.visible, false, "no key, no cast shadow");
+  applyPhotographicStudio(THREE, value, unlit, { bounds: rest, groundBounds: rest });
+  assert.equal(contact.layer.visible, false, "no key, no cast shadow");
   disposePhotographicStudio(value);
-  assert.equal(value.scene.getObjectByName("studio-ground-shadow"), undefined);
+  assert.equal(value.scene.getObjectByName("studio-contact-shadow"), undefined);
 });
 
 

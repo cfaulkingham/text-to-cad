@@ -50,10 +50,11 @@ export const PHOTOGRAPHIC_STUDIO_PANELS = Object.freeze([
 export const PHOTOGRAPHIC_STUDIO_GROUND_DIFFUSE_WEIGHT = 0.25;
 export const PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_INTENSITY = 0.85;
 export const PHOTOGRAPHIC_STUDIO_GROUND_EMISSIVE_NEUTRAL_MIX = 0.02;
-// A self-lit floor shows almost none of the key's shadow, so a shadow catcher
-// lays it over the floor: about the key's third of the light an opaque floor
-// receives, scaled by the floor's own opacity.
-export const PHOTOGRAPHIC_STUDIO_GROUND_SHADOW_OPACITY = 0.35;
+// The floor shadow (studioContactShadow.js) is baked over a square that reaches
+// `reach` times the model's height past its footprint, so the key's soft shadow
+// fits; occlusion fades out over `height` times the larger of that height and
+// half the footprint.
+export const PHOTOGRAPHIC_STUDIO_CONTACT_SHADOW = Object.freeze({ reach: 0.85, height: 0.5 });
 
 // Full square-ground width relative to model-bounds radius. Keep the camera's
 // fitted far padding on this same multiplier so the ordinary-depth frustum

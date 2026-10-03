@@ -170,13 +170,23 @@ rendering can keep the synchronous caller-owned path.
 The ground uses `PHOTOGRAPHIC_STUDIO_STAGE_RADIUS_MULTIPLIER` for its full
 square width. Camera fitting uses the same constant as far-plane padding, which
 keeps the finite two-triangle ground outside practical product views. Near-plane
-fitting includes the visible floor as well as the model. The physical floor is
-mostly self-lit backdrop color, so the key's own shadow barely darkens it: a
-coplanar `ShadowMaterial` catcher lays the key's cast shadow over it at
-`PHOTOGRAPHIC_STUDIO_GROUND_SHADOW_OPACITY` (0.35) times the floor's opacity,
-only where the key is blocked and never along its cone's falloff. It shows only
-while the studio lights the scene. A transparent legacy backdrop's floor is
-itself the catcher.
+fitting includes the visible floor as well as the model.
+
+The physical floor is mostly self-lit backdrop color and receives no shadow
+map; its shadow is a contact layer drawn over it (`studioContactShadow.js`):
+darkest where the model meets the floor, a broad occlusion fading with height,
+and the key's cast shadow crisp near the model and softening into a wide, light
+penumbra away from it. The layer is one texture over a square fitted to the
+rest placement (`PHOTOGRAPHIC_STUDIO_CONTACT_SHADOW`), as deep as the floor is
+opaque, and hidden while the studio's lighting is off. It is baked by a depth
+pass of the shadow casters seen up through the floor plus three small
+full-screen passes, only when the key's shadows re-render — a shadow-less
+sentinel in the scene notices that pass — so the interactive viewer, which
+reuses its shadow map on frames that only move the camera, bakes nothing on
+those frames, and the snapshot renderer, which renders shadows every frame,
+bakes every frame. The probe light that renders the heights is never added to
+the scene. A transparent legacy backdrop's floor stays a `ShadowMaterial`
+catcher of the key's shadow.
 
 Environment radiance and direct illumination are calibrated together at zero EV
 across colored assemblies, gray mechanical models, and authored metal/plastic
