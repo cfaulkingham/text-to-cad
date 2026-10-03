@@ -293,7 +293,7 @@ class KinematicsBuildTests(unittest.TestCase):
         # occurrence's topology gives, the index the resolver used to build.
         package = original(tree)
         try:
-            manifest = json.loads((package / "assembly.json").read_text())
+            manifest = json.loads((package / "assembly.json").read_text(encoding="utf-8"))
             artifact = StepTopologyArtifact(
                 cad_path="pivot", source_path=script, step_path=script.with_suffix(".step"),
                 artifact_path=package, manifest=manifest, selector_bundle=SelectorBundle(manifest=manifest),
