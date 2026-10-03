@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import copy
 from collections import OrderedDict
+import hashlib
 import json
 import math
 import os
@@ -88,11 +89,12 @@ _METADATA_CAPTURE_CACHE_LOCK = threading.Lock()
 _METADATA_CAPTURE_FLIGHTS: dict[tuple[str, str], dict] = {}
 _METADATA_CAPTURE_STAMP_BYTES = 512
 # Component entries validated against their object's bytes (``validate_geometry_component``,
-# a pure function of the two), by object and canonical entry; SURF containers
-# validated, by object. With the object still at its verified identity, the
-# check holds without the bytes.
+# a pure function of the two), by object, cid and the sha256 of the canonical
+# entry -- a digest, since the table is bounded by count and an entry's
+# faceColors grow with its faces; SURF containers validated, by object. With
+# the object still at its verified identity, the check holds without the bytes.
 _VALIDATED_CAPACITY = 1 << 16
-_VALIDATED_COMPONENTS: OrderedDict[tuple[str, bytes], None] = OrderedDict()
+_VALIDATED_COMPONENTS: OrderedDict[tuple[str, str, bytes], None] = OrderedDict()
 _VALIDATED_SURFACES: OrderedDict[str, None] = OrderedDict()
 
 IDENTITY_16 = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
@@ -712,7 +714,7 @@ def _capture(
         if type(entry) is not dict:
             raise ValueError("invalid geometry component")
         brep = entry["brep"]
-        validated = (brep, cid, canonical_json_bytes(entry))
+        validated = (brep, cid, hashlib.sha256(canonical_json_bytes(entry)).digest())
         known = validated in _VALIDATED_COMPONENTS
         key = held(brep) if known and not retain_payloads else None
         if key is None:
