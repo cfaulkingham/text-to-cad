@@ -31,12 +31,17 @@ def surface_request(**changes):
     return request
 
 
-def wait_for(predicate, message):
-    deadline = time.monotonic() + 3
-    while not predicate():
-        if time.monotonic() >= deadline:
-            raise AssertionError(message)
-        time.sleep(.005)
+def noticing_log():
+    """A stand-in for the supervisor's ``_log``, and the event it sets once the supervisor
+    notices a client leave -- whatever it then does: let the job finish, keep it for
+    coalesced consumers, or kill the worker."""
+    noticed = threading.Event()
+
+    def log(message):
+        if "client left" in message or "disconnected" in message:
+            noticed.set()
+
+    return log, noticed
 
 
 class Connection:
@@ -45,11 +50,20 @@ class Connection:
         self.incoming = iter(frames)
         self.closed = False
         self.disconnected = threading.Event()
+        self.sent = threading.Condition()
 
     def send(self, raw):
         if self.disconnected.is_set():
             raise OSError("client left")
-        self.frames.append(json.loads(raw))
+        with self.sent:
+            self.frames.append(json.loads(raw))
+            self.sent.notify_all()
+
+    def first_frame(self):
+        """The first frame sent to this client, once one has been."""
+        with self.sent:
+            self.sent.wait_for(lambda: self.frames)
+            return self.frames[0]
 
     def recv(self, timeout=None):
         if self.disconnected.is_set():
@@ -254,18 +268,19 @@ class ArtifactCoalescing(unittest.TestCase):
         pool.acquire.return_value = running
         request = {"tool": "artifact", "argv": [], "artifact": surface_request(), "store_root": "/store/a"}
         cancelled, late = Connection(), Connection()
+        log, noticed = noticing_log()
         with mock.patch.object(server, "_BROKER", registry), mock.patch.object(server, "_JOBS", ledger), \
-             mock.patch.object(server, "_POOL", pool), mock.patch.object(server, "_log") as log, \
+             mock.patch.object(server, "_POOL", pool), mock.patch.object(server, "_log", side_effect=log), \
              mock.patch.object(server, "CLIENT_LIVENESS_INTERVAL_SECONDS", .01), \
              concurrent.futures.ThreadPoolExecutor(2) as executor:
             owner = executor.submit(server._handle_request, cancelled, request)
             self.assertTrue(running.ready.wait(3))
             cancelled.disconnected.set()
-            wait_for(lambda: any(str(running.pid) in str(call.args[0]) for call in log.call_args_list),
-                          "the supervisor never noticed the client leave")
+            noticed.wait()
             self.assertFalse(running.killed, "a cancelled artifact request killed its warm worker")
             follower = executor.submit(server._handle_request, late, request)
-            wait_for(lambda: any("artifactResult" in frame for frame in late.frames),
+            # An attached consumer's first frame is the job's retained result.
+            self.assertIn("artifactResult", late.first_frame(),
                           "an identical request did not attach to the job still running")
             running.finish.set()
             owner.result(5)
@@ -811,8 +826,9 @@ raise SystemExit(artifacts._main())
                 handlers.append(thread)
                 thread.start()
 
+        log, noticed = noticing_log()
         with mock.patch.object(server, "_BROKER", self.private.broker), mock.patch.object(server, "_JOBS", ledger), \
-             mock.patch.object(server, "_POOL", pool), mock.patch.object(server, "_log") as log, \
+             mock.patch.object(server, "_POOL", pool), mock.patch.object(server, "_log", side_effect=log), \
              mock.patch.object(client, "_connect_or_spawn", side_effect=lambda _: transport.connect(address, self.private.key)), \
              mock.patch("cadgen.daemon.executors.use_daemon", return_value=True):
             acceptor = threading.Thread(target=serve_two, daemon=True)
@@ -830,8 +846,7 @@ raise SystemExit(artifacts._main())
                 first.result()
             # The supervisor notices its client leave, and the worker keeps the job: an
             # artifact job always finishes (it writes the store), whoever is still waiting.
-            wait_for(lambda: any("client left" in str(call.args[0]) for call in log.call_args_list),
-                          "the supervisor never noticed the first subscriber leave")
+            noticed.wait()
             self.assertTrue(entry["ownerActive"], "the producing request was abandoned")
             self.assertFalse(running.killed)
             running.finish.set()
