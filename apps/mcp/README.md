@@ -120,8 +120,9 @@ reference host `basic-host` does.
   and a longer body comes back a range at a time, which the tunnel puts together
   for the client. A part of a body that changed meanwhile (its `etag`) fails the
   read, and the cache verifies a tessellation's digest of the whole as of any
-  body. The server refuses any reply still longer (502) rather than send it.
-  4 MiB loads as fast as 8 MiB did.
+  body. The server refuses any reply still longer (502), and an agent's
+  screenshot longer than that, rather than send it. 4 MiB loads as fast as 8 MiB
+  did.
 - **One file.** The build inlines scripts, styles, workers (as blobs) and the
   drawing editor's fonts (as data URIs) into `dist/index.html`, and fails if
   anything would be left outside it: the host serves one resource and nothing

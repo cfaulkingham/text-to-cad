@@ -71,9 +71,9 @@ class _Session(unittest.TestCase):
     def launch(self, name: str, arguments: dict | None = None, meta: dict | None = None) -> dict:
         return self.call(name, arguments, meta)["structuredContent"]["launch"]
 
-    def poll_as(self, view: str, surface: str, answers: int, model: str | None = None) -> threading.Thread:
+    def poll_as(self, view: str, surface: str, answers: int, model: str | None = None, png: str = "iVBORw0KGgo=") -> threading.Thread:
         """A view syncing as the page does (every few milliseconds here): its first sync registers it
-        and says what it shows; it answers ``answers`` captures."""
+        and says what it shows; it answers ``answers`` captures with ``png``."""
         state = {"model": model, "selection": [f"{model}#o1.f1"]}
         self.call("cad_sync", {"view": view, "surface": surface, "model": model, "state": state})
 
@@ -85,7 +85,7 @@ class _Session(unittest.TestCase):
                     time.sleep(0.002)
                 for event in events:
                     asked += 1
-                    self.call("cad_capture_reply", {"requestId": event["requestId"], "png": "iVBORw0KGgo="})
+                    self.call("cad_capture_reply", {"requestId": event["requestId"], "png": png})
 
         viewer = threading.Thread(target=page, daemon=True)
         viewer.start()
@@ -529,6 +529,15 @@ class TunnelBoundTest(_Session):
             whole, sizes, etags = self.read(f"http://cad.invalid/__tess_cache/{fixture['key']}.tess?object={digest}&maxBytes={len(body)}", part=256)
         self.assertEqual((whole, etags), (body, {f'"{digest}"'}))
         self.assertGreaterEqual(len(sizes), 3)
+
+    def test_a_screenshot_longer_than_one_message_is_refused_not_sent(self) -> None:
+        model = str(self.workspace / "parts" / "bracket.stl")
+        viewer = self.poll_as("v1", "tab", 1, model, png=base64.b64encode(b"\x89PNG" + bytes(MAX_REPLY_BYTES)).decode("ascii"))
+        shot = self.call("cad_screenshot")
+        viewer.join(10)
+        self.assertTrue(shot["isError"])
+        self.assertIn("more than one message", shot["content"][0]["text"])
+        self.assertLess(len(json.dumps(shot)), 1024)
 
 class TunnelBodyTest(unittest.TestCase):
     """A large JSON body crosses the host's channel gzipped and says so; nothing else changes."""

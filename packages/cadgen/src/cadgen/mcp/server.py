@@ -723,6 +723,12 @@ class Server:
         png = reply.get("png")
         if not isinstance(png, str) or not png:
             raise ToolFailed("The CAD viewer answered without an image.")
+        from .tunnel import MAX_REPLY_BYTES
+
+        if len(png) // 4 * 3 > MAX_REPLY_BYTES:
+            # Sent, a message this long could close the host's connection (``tunnel.MAX_REPLY_BYTES``).
+            raise ToolFailed(f"The CAD viewer's picture is {len(png) // 4 * 3 / 1e6:.1f} MB, more than one message to this "
+                             "host may carry. Ask the person to make the view smaller, then capture again.")
         return {"content": [{"type": "image", "data": png, "mimeType": "image/png"},
                             {"type": "text", "text": f"{view.model} as shown in CAD."}],
                 "structuredContent": {"view": view.id, "model": view.model}}
