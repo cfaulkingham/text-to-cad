@@ -169,7 +169,7 @@ function eachMaterial(object, visit) {
  * and wide kernels as fractions of the baked square's width.
  */
 export function createStudioContactShadow(THREE, keyLight, {
-  size = 1024,
+  size = 512,
   strength = { contact: 0.75, occlusion: 0.5, key: 0.75, keyFar: 0.35 },
   blur = { narrow: 0.012, medium: 0.03, wide: 0.06 }
 } = {}) {
