@@ -2,6 +2,8 @@ import { viewerOriginUrl } from "./origin.js";
 const DIGEST_RE = /^[0-9a-f]{64}$/;
 const INITIAL_POLL_MS = 80;
 const MAX_POLL_MS = 640;
+// The longest a request whose derivation is still pending waits before asking again.
+const MAX_PENDING_POLL_MS = 5000;
 // The most components one POST /__cad/surfaces may name (cadgen/viewer/surfaces.py's
 // MAX_COMPONENTS); a larger request is sent as several.
 export const SURFACE_REQUEST_MAX_COMPONENTS = 64;
@@ -165,6 +167,7 @@ async function resolveSurfaceRequest(descriptor, requested, { signal, client, on
   };
   signal?.addEventListener("abort", cancel);
   let delay = INITIAL_POLL_MS;
+  const startedAt = Date.now();
   const announced = new Set();
   try {
     for (;;) {
@@ -224,7 +227,13 @@ async function resolveSurfaceRequest(descriptor, requested, { signal, client, on
       }
       if (!pending) return ready;
       await waitForPoll(delay, signal);
-      delay = Math.min(MAX_POLL_MS, delay * 2);
+      // Doubling to 640 ms hears an ordinary derivation soon after it lands. One still pending after
+      // seconds is queued behind others or stuck -- a daemon that waits two minutes for a worker that
+      // never announces itself -- and is asked at a tenth of the wait so far, at most every 5 s. At
+      // 640 ms the first parts of a cold open asked 1,500 times in those two minutes, every ask a host
+      // call in the CAD app, before the failure came back.
+      delay = Math.min(MAX_PENDING_POLL_MS,
+        Math.max(Math.min(MAX_POLL_MS, delay * 2), (Date.now() - startedAt) / 10));
     }
   } finally {
     signal?.removeEventListener("abort", cancel);

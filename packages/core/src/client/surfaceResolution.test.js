@@ -250,3 +250,33 @@ test("a failing chunk fails the whole request with its own error", async (t) => 
   const requests = Array.from({ length: 100 }, (_, index) => ({ cid: `part${index}`, surfaceInput: D, surfaceObject: O }));
   await assert.rejects(resolveSurfaceComponents(descriptor, requests), (error) => error instanceof SurfaceResolutionError && error.cid === "part70");
 });
+
+// A daemon whose worker never announces itself keeps a derivation pending for two minutes before it
+// fails. Asked every 640 ms throughout, the first eight parts of a cold w16 open made 1,500 requests
+// in that time (each a host call in the CAD app). The first asks stay as quick as they were.
+test("a derivation pending for two minutes is asked at a tenth of its wait, at most every 5 s", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  const asks = [];
+  const client = {
+    origin: "",
+    async requestSurfaces() {
+      asks.push(Date.now());
+      return { viewId: VIEW, job: "job-1", components: { part: { surfaceInput: D, state: "pending", job: "job-1" } } };
+    },
+    async cancelSurfaceRequest() { return {}; },
+  };
+  const controller = new AbortController();
+  const settled = resolveWithClient(descriptor, [{ cid: "part", surfaceInput: D }], { client, signal: controller.signal })
+    .catch((error) => error);
+  while (Date.now() < 120_000) {
+    await new Promise((resolve) => setImmediate(resolve)); // the answer lands and the next wait starts
+    t.mock.timers.tick(10);
+  }
+  controller.abort();
+  assert.equal((await settled).name, "AbortError");
+  const gaps = asks.slice(1).map((at, index) => at - asks[index]);
+  assert.deepEqual(gaps.slice(0, 4), [80, 160, 320, 640], "the first asks are as quick as ever");
+  assert.ok(asks.length < 60, `asked ${asks.length} times in two minutes`);
+  assert.ok(Math.max(...gaps) <= 5000, `the longest wait was ${Math.max(...gaps)} ms`);
+  assert.ok(gaps.at(-1) >= 4990, `the waits grew to 5 s, the last ${gaps.at(-1)} ms`);
+});
